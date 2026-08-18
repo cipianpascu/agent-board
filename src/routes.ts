@@ -193,22 +193,23 @@ export function signPayload(body: Record<string, unknown>, secret: string): { si
   return { signature: `sha256=${hmac}`, timestamp };
 }
 
-// Agent ID -> OpenClaw agent session key mapping
-const AGENT_SESSION_MAP: Record<string, string> = {
-  "jarvx": "agent:main:main",
-  "eff": "agent:eff:main",
-  "agency": "agent:agency:main",
-  "auteur-augmente": "agent:auteur-augmente:main",
-  "content-creator": "agent:content:main",
-  "sales-agent": "agent:sales:main",
-  "research-agent": "agent:research:main",
-  "coding-agent": "agent:coding:main",
-  "support": "agent:support:main",
-  "onboarding": "agent:onboarding:main",
-  "community": "agent:community:main",
-  "ops": "agent:ops:main",
-  "infra-agent": "agent:infra:main",
-};
+// Agent ID -> OpenClaw agent session key mapping.
+// Set OPENCLAW_AGENT_SESSION_MAP to a JSON object such as {"main":"agent:main:main","vr":"agent:vr:main"}
+// If unset, the board assignee ID is passed through unchanged.
+function loadAgentSessionMap(): Record<string, string> {
+  const raw = process.env.OPENCLAW_AGENT_SESSION_MAP;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, string>;
+  } catch {
+    console.error("[webhook] Invalid OPENCLAW_AGENT_SESSION_MAP JSON; using empty map");
+    return {};
+  }
+}
+
+const AGENT_SESSION_MAP = loadAgentSessionMap();
 
 // Map board assignee names to gateway agent IDs
 function resolveAgentId(assignee: string): string {
@@ -277,8 +278,9 @@ async function notifyAgent(task: Task, context?: string, event?: string): Promis
 }
 
 async function sendTaskUpdateWebhook(task: Task): Promise<boolean> {
-  const webhookUrl = process.env.OPENCLAW_HOOK_URL || "http://localhost:18789/hooks";
-  const webhookToken = process.env.OPENCLAW_HOOK_TOKEN || "";
+  const webhookUrl = OPENCLAW_HOOK_URL;
+  const webhookToken = getHookToken();
+  if (!webhookToken) return false;
 
   const payload = {
     event: "task.updated",

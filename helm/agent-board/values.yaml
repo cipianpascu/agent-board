@@ -108,6 +108,8 @@ secrets:
   databaseUrl: ""
   # Optional API keys in the format "key:agentId".
   apiKeys: ""
+  # Optional OpenClaw hook bearer token. Required to wake OpenClaw agents.
+  openclawHookToken: ""
 
 # Probes. Paths are exposed on /api because the API router is mounted at /api.
 probes:
@@ -129,6 +131,16 @@ probes:
     periodSeconds: 5
     timeoutSeconds: 5
     failureThreshold: 12
+
+# OpenClaw webhook integration
+openclaw:
+  # OpenClaw native /hooks/agent endpoint. In Kubernetes this must be the
+  # OpenClaw service DNS name, not localhost.
+  hookUrl: "http://oc-vr.openclaw.svc.cluster.local:18789/hooks/agent"
+  # Optional JSON mapping from board assignee IDs to OpenClaw session keys.
+  # Example: '{"main":"agent:main:main","vr":"agent:vr:main"}'
+  # Leave empty to pass assignee IDs through unchanged.
+  agentSessionMap: ""
 
 # Migrations run as a Helm pre-install/pre-upgrade Job before the Deployment.
 migrations:

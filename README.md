@@ -93,6 +93,7 @@ node dist/index.js --port 8080 --data ./my-data
 | `AGENTBOARD_API_KEYS` | Comma-separated `key:agentId` pairs for API authentication. Example: `sk-abc123:agent1,sk-def456:agent2` |
 | `OPENCLAW_HOOK_URL` | OpenClaw webhook URL for agent notifications (default: `http://localhost:18789/hooks/agent`) |
 | `OPENCLAW_HOOK_TOKEN` | Bearer token for OpenClaw webhook calls. Notifications disabled if not set. |
+| `OPENCLAW_AGENT_SESSION_MAP` | Optional JSON map from board assignee IDs to OpenClaw session keys, e.g. `{"main":"agent:main:main"}`. If unset, assignee IDs pass through unchanged. |
 | `AGENTBOARD_WEBHOOK_SECRET` | Secret for HMAC-SHA256 webhook signing. When set, all outbound webhooks include `X-AgentBoard-Signature` headers. |
 | `TEMPLATES_DIR` | Custom templates directory (default: `./templates`) |
 
@@ -206,14 +207,28 @@ If tasks found, pick the highest priority one and start working.
 
 ### OpenClaw Configuration
 
-Set the webhook token in your Agent Board service to match your OpenClaw hooks token:
+Set the webhook token in your Agent Board service to match your OpenClaw hooks token. In Kubernetes, use the OpenClaw service DNS name instead of `localhost`:
 
 ```bash
-OPENCLAW_HOOK_URL=http://localhost:18789/hooks/agent
+OPENCLAW_HOOK_URL=http://oc-vr.openclaw.svc.cluster.local:18789/hooks/agent
 OPENCLAW_HOOK_TOKEN=your-openclaw-hooks-token
 ```
 
-Agent Board maps agent IDs to OpenClaw session keys (configurable in `routes.ts`).
+If your board assignee IDs match OpenClaw agent IDs exactly, no mapping is needed. Otherwise, set `OPENCLAW_AGENT_SESSION_MAP` to a JSON object:
+
+```bash
+OPENCLAW_AGENT_SESSION_MAP='{"main":"agent:main:main","vr":"agent:vr:main"}'
+```
+
+OpenClaw must opt-in to the hooks endpoint. Add the `hooks` block to OpenClaw’s config with the same token:
+
+```yaml
+hooks:
+  enabled: true
+  secret: your-openclaw-hooks-token
+```
+
+See the [OpenClaw webhook docs](https://docs.openclaw.ai/webhook) for details.
 
 ## Dashboard
 
