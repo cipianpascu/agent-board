@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, IncomingMessage } from "http";
+import { AsyncLocalStorage } from "async_hooks";
 import { z } from "zod";
 import * as store from "./store";
 import { generateId, now } from "./utils";
@@ -14,6 +15,18 @@ const server = new McpServer({
   name: "agent-board",
   version: "0.1.0",
 });
+
+// Each Streamable HTTP request is handled in its own async context.  This
+// keeps the X-API-Key identity bound to tool execution even when requests from
+// different agents are processed concurrently.
+const actorContext = new AsyncLocalStorage<string>();
+
+function currentActor(): string {
+  const actor = actorContext.getStore();
+  if (actor) return actor;
+  if (apiKeyMap) throw new Error("MCP mutation is missing authenticated actor context");
+  return "mcp";
+}
 
 // --- Tools ---
 
@@ -54,7 +67,7 @@ server.tool(
     });
     appendAuditLog({
       timestamp: now(),
-      agentId: "mcp",
+      agentId: currentActor(),
       action: "project.create",
       projectId: project.id,
       details: `[MCP] Created project "${project.name}"`,
@@ -72,7 +85,7 @@ server.tool(
     if (!project) return { content: [{ type: "text" as const, text: "Project not found" }], isError: true };
     appendAuditLog({
       timestamp: now(),
-      agentId: "mcp",
+      agentId: currentActor(),
       action: "project.update",
       projectId: id,
       details: `[MCP] Updated project fields: ${Object.keys(updates).join(", ")}`,
@@ -89,12 +102,11 @@ server.tool(
     title: z.string(),
     description: z.string().optional(),
     assignee: z.string().optional(),
-    createdBy: z.string().optional(),
     priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
     tags: z.array(z.string()).optional(),
     column: z.enum(["backlog", "todo", "doing", "review", "done", "failed"]).optional(),
   },
-  async ({ projectId, title, description, assignee, createdBy, priority, tags, column }) => {
+  async ({ projectId, title, description, assignee, priority, tags, column }) => {
     const col: TaskColumn = column || "backlog";
     const task: Task = {
       id: generateId("task"),
@@ -104,7 +116,7 @@ server.tool(
       status: col,
       column: col,
       assignee: assignee || "",
-      createdBy: createdBy || "unknown",
+      createdBy: currentActor(),
       priority: priority || "medium",
       tags: tags || [],
       dependencies: [],
@@ -116,7 +128,7 @@ server.tool(
     const created = await store.createTask(task);
     appendAuditLog({
       timestamp: now(),
-      agentId: "mcp",
+      agentId: currentActor(),
       action: "task.create",
       taskId: created.id,
       projectId: created.projectId,
@@ -143,7 +155,7 @@ server.tool(
     if (!task) return { content: [{ type: "text" as const, text: "Task not found" }], isError: true };
     appendAuditLog({
       timestamp: now(),
-      agentId: "mcp",
+      agentId: currentActor(),
       action: "task.update",
       taskId: task.id,
       projectId: task.projectId,
@@ -155,18 +167,19 @@ server.tool(
 
 server.tool(
   "board_move_task",
-  "Move a task to a different column (backlog, todo, doing, review, done, failed). Optional agentId enforces ownership of an active lease.",
-  { id: z.string(), column: z.enum(["backlog", "todo", "doing", "review", "done", "failed"]), agentId: z.string().optional() },
-  async ({ id, column, agentId }) => {
+  "Move a task to a different column (backlog, todo, doing, review, done, failed). The authenticated agent identity enforces ownership of an active lease.",
+  { id: z.string(), column: z.enum(["backlog", "todo", "doing", "review", "done", "failed"]) },
+  async ({ id, column }) => {
+    const actor = currentActor();
     const taskBefore = await store.getTask(id);
-    const result = await moveTask(id, column, agentId);
+    const result = await moveTask(id, column, actor);
     if ("error" in result && !("task" in result)) {
       return { content: [{ type: "text" as const, text: result.error }], isError: true };
     }
     const moveResult = result as { task: Task; retried: boolean; chainedTask?: Task };
     appendAuditLog({
       timestamp: now(),
-      agentId: agentId || "mcp",
+      agentId: actor,
       action: "task.move",
       taskId: moveResult.task.id,
       projectId: moveResult.task.projectId,
@@ -181,18 +194,19 @@ server.tool(
 server.tool(
   "board_claim_task",
   "Atomically claim an unclaimed todo task and move it to doing",
-  { id: z.string(), agentId: z.string(), durationMs: z.number().optional() },
-  async ({ id, agentId, durationMs }) => {
-    const result = await claimTask(id, agentId, durationMs);
+  { id: z.string(), durationMs: z.number().optional() },
+  async ({ id, durationMs }) => {
+    const actor = currentActor();
+    const result = await claimTask(id, actor, durationMs);
     if ("error" in result) return { content: [{ type: "text" as const, text: result.error }], isError: true };
     appendAuditLog({
       timestamp: now(),
-      agentId,
+      agentId: actor,
       action: "task.claim",
       taskId: result.task.id,
       projectId: result.task.projectId,
       to: result.task.column,
-      details: `[MCP] Task claimed by ${agentId} until ${result.task.leaseUntil}`,
+      details: `[MCP] Task claimed by ${actor} until ${result.task.leaseUntil}`,
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
   }
@@ -201,9 +215,9 @@ server.tool(
 server.tool(
   "board_renew_task_lease",
   "Renew the lease on a claimed task",
-  { id: z.string(), agentId: z.string(), durationMs: z.number().optional() },
-  async ({ id, agentId, durationMs }) => {
-    const result = await renewTaskLease(id, agentId, durationMs);
+  { id: z.string(), durationMs: z.number().optional() },
+  async ({ id, durationMs }) => {
+    const result = await renewTaskLease(id, currentActor(), durationMs);
     if ("error" in result) return { content: [{ type: "text" as const, text: result.error }], isError: true };
     return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
   }
@@ -212,18 +226,19 @@ server.tool(
 server.tool(
   "board_release_task",
   "Release a claimed task back to todo",
-  { id: z.string(), agentId: z.string() },
-  async ({ id, agentId }) => {
-    const result = await releaseTask(id, agentId);
+  { id: z.string() },
+  async ({ id }) => {
+    const actor = currentActor();
+    const result = await releaseTask(id, actor);
     if ("error" in result) return { content: [{ type: "text" as const, text: result.error }], isError: true };
     appendAuditLog({
       timestamp: now(),
-      agentId,
+      agentId: actor,
       action: "task.release",
       taskId: result.task.id,
       projectId: result.task.projectId,
       to: result.task.column,
-      details: `[MCP] Task released by ${agentId}`,
+      details: `[MCP] Task released by ${actor}`,
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
   }
@@ -232,17 +247,18 @@ server.tool(
 server.tool(
   "board_add_comment",
   "Add a comment to a task",
-  { taskId: z.string(), author: z.string(), text: z.string() },
-  async ({ taskId, author, text }) => {
-    const task = await store.addComment(taskId, { author, text });
+  { taskId: z.string(), text: z.string() },
+  async ({ taskId, text }) => {
+    const actor = currentActor();
+    const task = await store.addComment(taskId, { author: actor, text });
     if (!task) return { content: [{ type: "text" as const, text: "Task not found" }], isError: true };
     appendAuditLog({
       timestamp: now(),
-      agentId: "mcp",
+      agentId: actor,
       action: "comment.add",
       taskId: task.id,
       projectId: task.projectId,
-      details: `[MCP] Comment by ${author}: ${text.slice(0, 100)}`,
+      details: `[MCP] Comment by ${actor}: ${text.slice(0, 100)}`,
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
   }
@@ -296,10 +312,10 @@ server.tool(
 
 server.tool(
   "board_my_tasks",
-  "List tasks assigned to a specific agent",
-  { agentId: z.string() },
-  async ({ agentId }) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await store.getTasks({ assignee: agentId }), null, 2) }],
+  "List tasks assigned to the authenticated agent",
+  {},
+  async () => ({
+    content: [{ type: "text" as const, text: JSON.stringify(await store.getTasks({ assignee: currentActor() }), null, 2) }],
   })
 );
 
@@ -313,7 +329,7 @@ server.tool(
     if (!deleted) return { content: [{ type: "text" as const, text: "Task not found" }], isError: true };
     appendAuditLog({
       timestamp: now(),
-      agentId: "mcp",
+      agentId: currentActor(),
       action: "task.delete",
       taskId: id,
       projectId: task?.projectId,
@@ -333,7 +349,7 @@ server.tool(
     if (!deleted) return { content: [{ type: "text" as const, text: "Project not found" }], isError: true };
     appendAuditLog({
       timestamp: now(),
-      agentId: "mcp",
+      agentId: currentActor(),
       action: "project.delete",
       projectId: id,
       details: `[MCP] Deleted project "${project?.name || id}"`,
@@ -357,12 +373,11 @@ function loadApiKeyMap(): Map<string, string> | undefined {
 
 const apiKeyMap = loadApiKeyMap();
 
-function isAuthorized(req: IncomingMessage): boolean {
-  if (!apiKeyMap) return true;
+function authenticatedAgentId(req: IncomingMessage): string | undefined {
+  if (!apiKeyMap) return "mcp";
   const header = req.headers["x-api-key"];
   const key = Array.isArray(header) ? header[0] : header;
-  if (!key) return false;
-  return apiKeyMap.has(key);
+  return key ? apiKeyMap.get(key) : undefined;
 }
 
 // --- Start ---
@@ -383,6 +398,9 @@ async function main() {
   }
 
   if (useStdio) {
+    if (apiKeyMap) {
+      throw new Error("AGENTBOARD_API_KEYS requires MCP HTTP transport so callers can provide X-API-Key");
+    }
     const transport = new StdioServerTransport();
     await server.connect(transport);
     console.log("[mcp] stdio transport connected");
@@ -397,17 +415,20 @@ async function main() {
 
   const httpServer = createServer((req, res) => {
     if (req.url?.startsWith("/mcp")) {
-      if (!isAuthorized(req)) {
+      const actor = authenticatedAgentId(req);
+      if (!actor) {
         res.statusCode = 401;
         res.end("Unauthorized");
         return;
       }
-      transport.handleRequest(req, res).catch((err) => {
-        console.error("[mcp] handleRequest error:", err);
-        if (!res.headersSent) {
-          res.statusCode = 500;
-          res.end("Internal server error");
-        }
+      actorContext.run(actor, () => {
+        transport.handleRequest(req, res).catch((err) => {
+          console.error("[mcp] handleRequest error:", err);
+          if (!res.headersSent) {
+            res.statusCode = 500;
+            res.end("Internal server error");
+          }
+        });
       });
     } else {
       res.statusCode = 404;

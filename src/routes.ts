@@ -112,6 +112,14 @@ function getAgentId(req: Request): string {
   return (req as any).agentId || "unknown";
 }
 
+// When API keys are configured, the actor is the identity bound to the
+// X-API-Key header.  Do not let a caller claim to be another agent through a
+// request field.  The fallback retains the unauthenticated local-development
+// behaviour, where callers historically supplied their own agentId/author.
+function mutationActor(req: Request, legacyActor?: string): string {
+  return apiKeys.size > 0 ? getAgentId(req) : legacyActor || getAgentId(req);
+}
+
 // --- Dependency Cycle Detection ---
 
 async function hasCycle(taskId: string, dependencies: string[]): Promise<boolean> {
@@ -520,7 +528,7 @@ router.post("/tasks", validate(CreateTaskSchema), async (req: Request, res: Resp
     status: col,
     column: col,
     assignee,
-    createdBy: createdBy || "unknown",
+    createdBy: mutationActor(req, createdBy),
     priority: priority || "medium",
     tags: tags || [],
     dependencies: dependencies || [],
@@ -624,7 +632,8 @@ router.delete("/tasks/:id", async (req: Request, res: Response) => {
 
 router.post("/tasks/:id/comments", validate(CreateCommentSchema), async (req: Request, res: Response) => {
   const { author, text } = req.body;
-  const updated = await store.addComment(req.params.id as string, { author, text });
+  const actor = mutationActor(req, author);
+  const updated = await store.addComment(req.params.id as string, { author: actor, text });
   if (!updated) return res.status(404).json({ error: "Task not found" });
 
   appendAuditLog({
@@ -633,12 +642,12 @@ router.post("/tasks/:id/comments", validate(CreateCommentSchema), async (req: Re
     action: "comment.add",
     taskId: updated.id,
     projectId: updated.projectId,
-    details: `Comment by ${author}: ${text.slice(0, 100)}`,
+    details: `Comment by ${actor}: ${text.slice(0, 100)}`,
   });
 
   // Notify assignee in real-time via webhook (if comment is from a different agent)
-  if (updated.assignee && updated.assignee !== author) {
-    notifyAgent(updated, `New comment from ${author}: ${text.slice(0, 200)}`, "comment.add").catch(() => {});
+  if (updated.assignee && updated.assignee !== actor) {
+    notifyAgent(updated, `New comment from ${actor}: ${text.slice(0, 200)}`, "comment.add").catch(() => {});
   }
 
   res.json(updated);
@@ -729,10 +738,11 @@ router.get("/client/:projectId", async (req: Request, res: Response) => {
 
 router.post("/tasks/:id/move", validate(MoveTaskSchema), async (req: Request, res: Response) => {
   const { column, agentId } = req.body;
+  const actor = mutationActor(req, agentId);
   const taskBefore = await store.getTask(req.params.id as string);
   const fromColumn = taskBefore?.column;
 
-  const result = await moveTask(req.params.id as string, column, agentId || getAgentId(req));
+  const result = await moveTask(req.params.id as string, column, actor);
 
   if ("error" in result && !("task" in result)) {
     const status = result.error === "Task not found" ? 404 : 400;
@@ -788,23 +798,24 @@ router.post("/tasks/:id/move", validate(MoveTaskSchema), async (req: Request, re
 
 router.post("/tasks/:id/claim", validate(ClaimTaskSchema), async (req: Request, res: Response) => {
   const { agentId, durationMs } = req.body;
-  const result = await claimTask(req.params.id as string, agentId, durationMs);
+  const actor = mutationActor(req, agentId);
+  const result = await claimTask(req.params.id as string, actor, durationMs);
   if ("error" in result) return res.status(400).json(result);
   appendAuditLog({
     timestamp: now(),
-    agentId,
+    agentId: actor,
     action: "task.claim",
     taskId: result.task.id,
     projectId: result.task.projectId,
     to: result.task.column,
-    details: `Task claimed by ${agentId} until ${result.task.leaseUntil}`,
+    details: `Task claimed by ${actor} until ${result.task.leaseUntil}`,
   });
   res.json(result);
 });
 
 router.post("/tasks/:id/renew", validate(ClaimTaskSchema), async (req: Request, res: Response) => {
   const { agentId, durationMs } = req.body;
-  const result = await renewTaskLease(req.params.id as string, agentId, durationMs);
+  const result = await renewTaskLease(req.params.id as string, mutationActor(req, agentId), durationMs);
   if ("error" in result) {
     const status = result.error === "Task not found" ? 404 : 400;
     return res.status(status).json(result);
@@ -814,19 +825,20 @@ router.post("/tasks/:id/renew", validate(ClaimTaskSchema), async (req: Request, 
 
 router.post("/tasks/:id/release", validate(ClaimTaskSchema), async (req: Request, res: Response) => {
   const { agentId } = req.body;
-  const result = await releaseTask(req.params.id as string, agentId);
+  const actor = mutationActor(req, agentId);
+  const result = await releaseTask(req.params.id as string, actor);
   if ("error" in result) {
     const status = result.error === "Task not found" ? 404 : 400;
     return res.status(status).json(result);
   }
   appendAuditLog({
     timestamp: now(),
-    agentId,
+    agentId: actor,
     action: "task.release",
     taskId: result.task.id,
     projectId: result.task.projectId,
     to: result.task.column,
-    details: `Task released by ${agentId}`,
+    details: `Task released by ${actor}`,
   });
   res.json(result);
 });

@@ -265,6 +265,11 @@ If `AGENTBOARD_API_KEYS` is set, all requests require an `X-API-Key` header:
 curl -H "X-API-Key: sk-abc123" http://localhost:3456/api/projects
 ```
 
+Keys are configured as `key:agentId` pairs. For authenticated mutations, the
+mapped `agentId` is the actor: caller-supplied `agentId`, `author`, and
+`createdBy` values cannot impersonate another agent. This identity is used for
+task leases, comments, and audit records.
+
 If no keys are configured, all requests are allowed (backward compatible).
 
 ### Health

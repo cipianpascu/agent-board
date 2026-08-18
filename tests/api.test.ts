@@ -5,7 +5,7 @@ import os from "os";
 import express from "express";
 import request from "supertest";
 import { setDataDir } from "../src/store";
-import apiRouter, { setTemplatesDir, signPayload } from "../src/routes";
+import apiRouter, { reloadApiKeys, setTemplatesDir, signPayload } from "../src/routes";
 import { setAuditDataDir } from "../src/audit";
 
 let tmpDir: string;
@@ -35,6 +35,51 @@ describe("GET /api/health", () => {
     const res = await request(app).get("/api/health");
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("ok");
+  });
+});
+
+describe("API-key identity binding", () => {
+  it("uses the X-API-Key identity instead of caller-supplied task identities", async () => {
+    const previousKeys = process.env.AGENTBOARD_API_KEYS;
+    process.env.AGENTBOARD_API_KEYS = "key-vr:vr,key-main:main";
+    reloadApiKeys();
+
+    try {
+      const vr = { "X-API-Key": "key-vr" };
+      const main = { "X-API-Key": "key-main" };
+      const { body: project } = await request(app).post("/api/projects").set(vr).send({ name: "P" });
+      const { body: task } = await request(app)
+        .post("/api/tasks")
+        .set(vr)
+        .send({ projectId: project.id, title: "T", assignee: "vr", createdBy: "main", column: "todo" });
+
+      expect(task.createdBy).toBe("vr");
+
+      const claim = await request(app)
+        .post(`/api/tasks/${task.id}/claim`)
+        .set(vr)
+        .send({ agentId: "main" });
+      expect(claim.status).toBe(200);
+      expect(claim.body.task.claimedBy).toBe("vr");
+
+      const comment = await request(app)
+        .post(`/api/tasks/${task.id}/comments`)
+        .set(vr)
+        .send({ author: "main", text: "Working on it" });
+      expect(comment.status).toBe(200);
+      expect(comment.body.comments.at(-1).author).toBe("vr");
+
+      const foreignRenew = await request(app)
+        .post(`/api/tasks/${task.id}/renew`)
+        .set(main)
+        .send({ agentId: "vr" });
+      expect(foreignRenew.status).toBe(400);
+      expect(foreignRenew.body.error).toMatch(/owned by main/);
+    } finally {
+      if (previousKeys === undefined) delete process.env.AGENTBOARD_API_KEYS;
+      else process.env.AGENTBOARD_API_KEYS = previousKeys;
+      reloadApiKeys();
+    }
   });
 });
 
