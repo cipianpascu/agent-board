@@ -132,6 +132,12 @@ probes:
     timeoutSeconds: 5
     failureThreshold: 12
 
+# MCP sidecar
+mcp:
+  enabled: false
+  port: 3457
+  resources: {}
+
 # OpenClaw webhook integration
 openclaw:
   # OpenClaw native /hooks/agent endpoint. In Kubernetes this must be the

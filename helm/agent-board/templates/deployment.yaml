@@ -78,6 +78,33 @@ spec:
               mountPath: /tmp
             - name: data
               mountPath: /app/data
+        {{- if .Values.mcp.enabled }}
+        - name: mcp
+          image: {{ include "agent-board.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "dist/mcp-server.js"]
+          ports:
+            - name: mcp
+              containerPort: {{ .Values.mcp.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "agent-board.fullname" . }}
+            - secretRef:
+                name: {{ include "agent-board.secretName" . }}
+                optional: true
+          {{- with .Values.mcp.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /app/data
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

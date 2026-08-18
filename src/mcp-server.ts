@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer } from "http";
+import { createServer, IncomingMessage } from "http";
 import { z } from "zod";
 import * as store from "./store";
 import { generateId, now } from "./utils";
@@ -342,6 +342,29 @@ server.tool(
   }
 );
 
+// --- Auth ---
+
+function loadApiKeyMap(): Map<string, string> | undefined {
+  const raw = process.env.AGENTBOARD_API_KEYS;
+  if (!raw) return undefined;
+  const map = new Map<string, string>();
+  for (const part of raw.split(",")) {
+    const [key, agentId] = part.trim().split(":");
+    if (key && agentId) map.set(key, agentId);
+  }
+  return map;
+}
+
+const apiKeyMap = loadApiKeyMap();
+
+function isAuthorized(req: IncomingMessage): boolean {
+  if (!apiKeyMap) return true;
+  const header = req.headers["x-api-key"];
+  const key = Array.isArray(header) ? header[0] : header;
+  if (!key) return false;
+  return apiKeyMap.has(key);
+}
+
 // --- Start ---
 
 function parseArgs() {
@@ -374,6 +397,11 @@ async function main() {
 
   const httpServer = createServer((req, res) => {
     if (req.url?.startsWith("/mcp")) {
+      if (!isAuthorized(req)) {
+        res.statusCode = 401;
+        res.end("Unauthorized");
+        return;
+      }
       transport.handleRequest(req, res).catch((err) => {
         console.error("[mcp] handleRequest error:", err);
         if (!res.headersSent) {

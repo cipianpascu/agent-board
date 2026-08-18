@@ -386,6 +386,7 @@ node dist/mcp-server.js --stdio --data ./data   # stdio transport for Claude Des
 | `--stdio` | `false` | Use `StdioServerTransport` instead of stateless HTTP |
 | `MCP_TRANSPORT=stdio` | `http` | Set to `stdio` without the flag |
 | `MCP_PORT` | `3457` | HTTP port for Streamable HTTP |
+| `AGENTBOARD_API_KEYS` | _(none)_ | HTTP MCP endpoint requires `X-API-Key` header to match one of the configured `key:agentId` pairs when set |
 | `--data` | `./data` | Data directory for file/SQLite backends |
 
 ### Stateless HTTP endpoint
@@ -420,7 +421,7 @@ For local stdio mode:
 
 For remote HTTP mode, configure your MCP client to connect to `http://localhost:3457/mcp`.
 
-### MCP Tools (12)
+### MCP Tools (15)
 
 | Tool | Description |
 |------|-------------|
@@ -438,6 +439,9 @@ For remote HTTP mode, configure your MCP client to connect to `http://localhost:
 | `board_list_comments` | List comments on a task |
 | `board_get_task_thread` | Get task summary + full comment thread |
 | `board_delete_project` | Delete a project and all its tasks |
+| `board_claim_task` | Atomically claim an unclaimed todo task and move it to doing |
+| `board_renew_task_lease` | Renew the lease on a claimed task |
+| `board_release_task` | Release a claimed task back to todo |
 
 All MCP mutations are logged to the audit trail.
 
