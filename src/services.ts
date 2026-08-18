@@ -15,14 +15,14 @@ export async function moveTask(taskId: string, column: TaskColumn): Promise<Move
   if (!column) return { error: "column is required" };
   if (!VALID_COLUMNS.includes(column)) return { error: `column must be one of: ${VALID_COLUMNS.join(", ")}` };
 
-  const current = store.getTask(taskId);
+  const current = await store.getTask(taskId);
   if (!current) return { error: "Task not found" };
 
   // Dependency gate: when moving to "doing", check all dependencies are in "done"
   if (column === "doing" && current.dependencies.length > 0) {
     const blockers: { id: string; title: string; column: string }[] = [];
     for (const depId of current.dependencies) {
-      const dep = store.getTask(depId);
+      const dep = await store.getTask(depId);
       if (dep && dep.column !== "done") {
         blockers.push({ id: dep.id, title: dep.title, column: dep.column });
       }
@@ -93,7 +93,7 @@ export async function moveTask(taskId: string, column: TaskColumn): Promise<Move
 
   // Auto-notify dependents: if moved to "done", find tasks that depend on this one
   if (column === "done") {
-    const allTasks = store.getTasks({});
+    const allTasks = await store.getTasks({});
     for (const t of allTasks) {
       if (t.dependencies.includes(taskId)) {
         await store.addComment(t.id, {

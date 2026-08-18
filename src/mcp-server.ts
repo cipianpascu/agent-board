@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createServer } from "http";
 import { z } from "zod";
 import * as store from "./store";
 import { generateId, now } from "./utils";
@@ -20,7 +22,7 @@ server.tool(
   "List all projects with optional filters",
   { status: z.string().optional(), owner: z.string().optional() },
   async (args) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(store.getProjects(args), null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(await store.getProjects(args), null, 2) }],
   })
 );
 
@@ -29,9 +31,9 @@ server.tool(
   "Get project details with its tasks",
   { id: z.string() },
   async ({ id }) => {
-    const project = store.getProject(id);
+    const project = await store.getProject(id);
     if (!project) return { content: [{ type: "text" as const, text: "Project not found" }], isError: true };
-    const tasks = store.getTasks({ projectId: id });
+    const tasks = await store.getTasks({ projectId: id });
     return { content: [{ type: "text" as const, text: JSON.stringify({ ...project, tasks }, null, 2) }] };
   }
 );
@@ -156,7 +158,7 @@ server.tool(
   "Move a task to a different column (backlog, todo, doing, review, done, failed)",
   { id: z.string(), column: z.enum(["backlog", "todo", "doing", "review", "done", "failed"]) },
   async ({ id, column }) => {
-    const taskBefore = store.getTask(id);
+    const taskBefore = await store.getTask(id);
     const result = await moveTask(id, column);
     if ("error" in result && !("task" in result)) {
       return { content: [{ type: "text" as const, text: result.error }], isError: true };
@@ -200,7 +202,7 @@ server.tool(
   "List all comments for a task",
   { taskId: z.string() },
   async ({ taskId }) => {
-    const task = store.getTask(taskId);
+    const task = await store.getTask(taskId);
     if (!task) return { content: [{ type: "text" as const, text: "Task not found" }], isError: true };
     return { content: [{ type: "text" as const, text: JSON.stringify(task.comments, null, 2) }] };
   }
@@ -211,7 +213,7 @@ server.tool(
   "Get task summary with all comments (for agent context)",
   { taskId: z.string() },
   async ({ taskId }) => {
-    const task = store.getTask(taskId);
+    const task = await store.getTask(taskId);
     if (!task) return { content: [{ type: "text" as const, text: "Task not found" }], isError: true };
     const thread = {
       id: task.id,
@@ -237,7 +239,7 @@ server.tool(
     tag: z.string().optional(),
   },
   async (args) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(store.getTasks(args), null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(await store.getTasks(args), null, 2) }],
   })
 );
 
@@ -246,7 +248,7 @@ server.tool(
   "List tasks assigned to a specific agent",
   { agentId: z.string() },
   async ({ agentId }) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(store.getTasks({ assignee: agentId }), null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(await store.getTasks({ assignee: agentId }), null, 2) }],
   })
 );
 
@@ -255,7 +257,7 @@ server.tool(
   "Delete a task by ID",
   { id: z.string() },
   async ({ id }) => {
-    const task = store.getTask(id);
+    const task = await store.getTask(id);
     const deleted = await store.deleteTask(id);
     if (!deleted) return { content: [{ type: "text" as const, text: "Task not found" }], isError: true };
     appendAuditLog({
@@ -275,7 +277,7 @@ server.tool(
   "Delete a project and all its tasks",
   { id: z.string() },
   async ({ id }) => {
-    const project = store.getProject(id);
+    const project = await store.getProject(id);
     const deleted = await store.deleteProject(id);
     if (!deleted) return { content: [{ type: "text" as const, text: "Project not found" }], isError: true };
     appendAuditLog({
@@ -291,15 +293,59 @@ server.tool(
 
 // --- Start ---
 
+function parseArgs() {
+  const args = process.argv.slice(2);
+  const dataIdx = args.indexOf("--data");
+  const dataDir = dataIdx !== -1 && args[dataIdx + 1] ? args[dataIdx + 1] : undefined;
+  const useStdio = args.includes("--stdio") || process.env.MCP_TRANSPORT === "stdio";
+  const port = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT, 10) : 3457;
+  return { dataDir, useStdio, port };
+}
+
 async function main() {
-  // Parse --data flag
-  const dataIdx = process.argv.indexOf("--data");
-  if (dataIdx !== -1 && process.argv[dataIdx + 1]) {
-    store.setDataDir(process.argv[dataIdx + 1]);
+  const { dataDir, useStdio, port } = parseArgs();
+  if (dataDir) {
+    await store.initStore({ dataDir });
   }
 
-  const transport = new StdioServerTransport();
+  if (useStdio) {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.log("[mcp] stdio transport connected");
+    return;
+  }
+
+  // Stateless Streamable HTTP: no session tracking, each request handled independently
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  });
   await server.connect(transport);
+
+  const httpServer = createServer((req, res) => {
+    if (req.url?.startsWith("/mcp")) {
+      transport.handleRequest(req, res).catch((err) => {
+        console.error("[mcp] handleRequest error:", err);
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.end("Internal server error");
+        }
+      });
+    } else {
+      res.statusCode = 404;
+      res.end("Not found");
+    }
+  });
+
+  const shutdown = async () => {
+    httpServer.close(() => {});
+    await transport.close();
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+
+  httpServer.listen(port, () => {
+    console.log(`[mcp] stateless Streamable HTTP server listening on http://localhost:${port}/mcp`);
+  });
 }
 
 main().catch((err) => {

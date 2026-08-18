@@ -1,0 +1,9 @@
+apiVersion: v2
+name: agent-board
+description: A Helm chart for the Agent Board multi-agent task orchestration service
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/cipianpascu/agent-board
+sources:
+  - https://github.com/cipianpascu/agent-board

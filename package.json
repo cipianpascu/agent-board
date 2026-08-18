@@ -11,6 +11,7 @@
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "mcp": "node dist/mcp-server.js",
+    "migrate": "node dist/migrate.js",
     "test": "vitest run"
   },
   "keywords": [
@@ -23,12 +24,16 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "better-sqlite3": "^12.6.2",
     "express": "^4.21.2",
+    "pg": "^8.18.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.1",
     "@types/node": "^22.13.1",
+    "@types/pg": "^8.16.0",
     "@types/supertest": "^6.0.3",
     "supertest": "^7.2.2",
     "typescript": "^5.7.3",

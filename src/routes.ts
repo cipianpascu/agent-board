@@ -72,6 +72,19 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
+router.get("/healthz", (_req: Request, res: Response) => {
+  res.json({ status: "ok" });
+});
+
+router.get("/readyz", async (_req: Request, res: Response) => {
+  try {
+    await store.getStore().ready?.();
+    res.json({ status: "ok" });
+  } catch (err) {
+    res.status(503).json({ status: "not ready", error: (err as Error).message });
+  }
+});
+
 // Apply auth middleware to all routes
 router.use(authMiddleware);
 
@@ -100,7 +113,7 @@ function getAgentId(req: Request): string {
 
 // --- Dependency Cycle Detection ---
 
-function hasCycle(taskId: string, dependencies: string[]): boolean {
+async function hasCycle(taskId: string, dependencies: string[]): Promise<boolean> {
   const visited = new Set<string>();
   const stack = [...dependencies];
   while (stack.length > 0) {
@@ -108,7 +121,7 @@ function hasCycle(taskId: string, dependencies: string[]): boolean {
     if (current === taskId) return true;
     if (visited.has(current)) continue;
     visited.add(current);
-    const task = store.getTask(current);
+    const task = await store.getTask(current);
     if (task) {
       for (const dep of task.dependencies) {
         stack.push(dep);
@@ -293,25 +306,25 @@ async function sendTaskUpdateWebhook(task: Task): Promise<boolean> {
 
 // --- Health ---
 
-router.get("/health", (_req: Request, res: Response) => {
+router.get("/health", async (_req: Request, res: Response) => {
   res.json({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() });
 });
 
 // --- Projects ---
 
-router.get("/projects", (req: Request, res: Response) => {
+router.get("/projects", async (req: Request, res: Response) => {
   const { status, owner } = req.query;
-  res.json(store.getProjects({
+  res.json(await store.getProjects({
     status: status as string | undefined,
     owner: owner as string | undefined,
   }));
 });
 
-router.get("/projects/:id", (req: Request, res: Response) => {
+router.get("/projects/:id", async (req: Request, res: Response) => {
   const id = req.params.id as string;
-  const project = store.getProject(id);
+  const project = await store.getProject(id);
   if (!project) return res.status(404).json({ error: "Project not found" });
-  const tasks = store.getTasks({ projectId: id });
+  const tasks = await store.getTasks({ projectId: id });
   res.json({ ...project, tasks });
 });
 
@@ -355,7 +368,7 @@ router.patch("/projects/:id", validate(UpdateProjectSchema), async (req: Request
 });
 
 router.delete("/projects/:id", async (req: Request, res: Response) => {
-  const project = store.getProject(req.params.id as string);
+  const project = await store.getProject(req.params.id as string);
   const deleted = await store.deleteProject(req.params.id as string);
   if (!deleted) return res.status(404).json({ error: "Project not found" });
 
@@ -372,7 +385,7 @@ router.delete("/projects/:id", async (req: Request, res: Response) => {
 
 // --- Project Templates ---
 
-router.get("/templates", (_req: Request, res: Response) => {
+router.get("/templates", async (_req: Request, res: Response) => {
   const dir = getTemplatesDir();
   if (!existsSync(dir)) return res.json([]);
   try {
@@ -385,7 +398,7 @@ router.get("/templates", (_req: Request, res: Response) => {
 
 router.post("/projects/:id/from-template", async (req: Request, res: Response) => {
   const projectId = req.params.id as string;
-  const project = store.getProject(projectId);
+  const project = await store.getProject(projectId);
   if (!project) return res.status(404).json({ error: "Project not found" });
 
   const { template, tasks: inlineTasks } = req.body;
@@ -477,15 +490,15 @@ router.post("/projects/:id/from-template", async (req: Request, res: Response) =
 
 // --- Tasks ---
 
-router.get("/tasks/:id", (req: Request, res: Response) => {
-  const task = store.getTask(req.params.id as string);
+router.get("/tasks/:id", async (req: Request, res: Response) => {
+  const task = await store.getTask(req.params.id as string);
   if (!task) return res.status(404).json({ error: "Task not found" });
   res.json(task);
 });
 
-router.get("/tasks", (req: Request, res: Response) => {
+router.get("/tasks", async (req: Request, res: Response) => {
   const { projectId, assignee, status, tag } = req.query;
-  res.json(store.getTasks({
+  res.json(await store.getTasks({
     projectId: projectId as string | undefined,
     assignee: assignee as string | undefined,
     status: status as string | undefined,
@@ -547,13 +560,13 @@ router.post("/tasks", validate(CreateTaskSchema), async (req: Request, res: Resp
 router.patch("/tasks/:id", validate(UpdateTaskSchema), async (req: Request, res: Response) => {
   // Cycle detection when dependencies are being updated
   if (req.body.dependencies && Array.isArray(req.body.dependencies)) {
-    if (hasCycle(req.params.id as string, req.body.dependencies)) {
+    if (await hasCycle(req.params.id as string, req.body.dependencies)) {
       return res.status(400).json({ error: "Circular dependency detected" });
     }
   }
 
   // Capture previous assignee before update for change detection
-  const taskBefore = store.getTask(req.params.id as string);
+  const taskBefore = await store.getTask(req.params.id as string);
   const previousAssignee = taskBefore?.assignee;
 
   const updated = await store.updateTask(req.params.id as string, req.body);
@@ -578,12 +591,12 @@ router.patch("/tasks/:id", validate(UpdateTaskSchema), async (req: Request, res:
 
 router.delete("/tasks/:id", async (req: Request, res: Response) => {
   const taskId = req.params.id as string;
-  const task = store.getTask(taskId);
+  const task = await store.getTask(taskId);
   const deleted = await store.deleteTask(taskId);
   if (!deleted) return res.status(404).json({ error: "Task not found" });
 
   // Clean up orphaned dependencies in other tasks
-  const allTasks = store.getTasks({});
+  const allTasks = await store.getTasks({});
   for (const t of allTasks) {
     if (t.dependencies.includes(taskId)) {
       await store.updateTask(t.id, {
@@ -630,23 +643,23 @@ router.post("/tasks/:id/comments", validate(CreateCommentSchema), async (req: Re
 
 // --- GET Comments ---
 
-router.get("/tasks/:id/comments", (req: Request, res: Response) => {
-  const task = store.getTask(req.params.id as string);
+router.get("/tasks/:id/comments", async (req: Request, res: Response) => {
+  const task = await store.getTask(req.params.id as string);
   if (!task) return res.status(404).json({ error: "Task not found" });
   res.json(task.comments);
 });
 
 // --- Task Dependencies ---
 
-router.get("/tasks/:id/dependencies", (req: Request, res: Response) => {
-  const task = store.getTask(req.params.id as string);
+router.get("/tasks/:id/dependencies", async (req: Request, res: Response) => {
+  const task = await store.getTask(req.params.id as string);
   if (!task) return res.status(404).json({ error: "Task not found" });
 
   const dependencies: Task[] = [];
   const blockedBy: Task[] = [];
 
   for (const depId of task.dependencies) {
-    const dep = store.getTask(depId);
+    const dep = await store.getTask(depId);
     if (dep) {
       dependencies.push(dep);
       if (dep.column !== "done") {
@@ -658,11 +671,11 @@ router.get("/tasks/:id/dependencies", (req: Request, res: Response) => {
   res.json({ task, dependencies, blockedBy });
 });
 
-router.get("/tasks/:id/dependents", (req: Request, res: Response) => {
-  const task = store.getTask(req.params.id as string);
+router.get("/tasks/:id/dependents", async (req: Request, res: Response) => {
+  const task = await store.getTask(req.params.id as string);
   if (!task) return res.status(404).json({ error: "Task not found" });
 
-  const allTasks = store.getTasks({});
+  const allTasks = await store.getTasks({});
   const dependents = allTasks.filter(t => t.dependencies.includes(task.id));
 
   res.json({ task, dependents });
@@ -670,12 +683,12 @@ router.get("/tasks/:id/dependents", (req: Request, res: Response) => {
 
 // --- Client View ---
 
-router.get("/client/:projectId", (req: Request, res: Response) => {
-  const project = store.getProject(req.params.projectId as string);
+router.get("/client/:projectId", async (req: Request, res: Response) => {
+  const project = await store.getProject(req.params.projectId as string);
   if (!project) return res.status(404).json({ error: "Project not found" });
   if (!project.clientViewEnabled) return res.status(403).json({ error: "Client view is not enabled for this project" });
 
-  const tasks = store.getTasks({ projectId: project.id });
+  const tasks = await store.getTasks({ projectId: project.id });
   const total = tasks.length;
   const done = tasks.filter(t => t.column === "done").length;
 
@@ -713,7 +726,7 @@ router.get("/client/:projectId", (req: Request, res: Response) => {
 
 router.post("/tasks/:id/move", validate(MoveTaskSchema), async (req: Request, res: Response) => {
   const { column } = req.body;
-  const taskBefore = store.getTask(req.params.id as string);
+  const taskBefore = await store.getTask(req.params.id as string);
   const fromColumn = taskBefore?.column;
 
   const result = await moveTask(req.params.id as string, column);
@@ -748,7 +761,7 @@ router.post("/tasks/:id/move", validate(MoveTaskSchema), async (req: Request, re
 
   // Notify on retry
   if (moveResult.retried) {
-    const retriedTask = store.getTask(req.params.id as string);
+    const retriedTask = await store.getTask(req.params.id as string);
     if (retriedTask) {
       notifyAgent(retriedTask, `Auto-retry. Check les commentaires pour comprendre l'echec.`, "task.move").catch(() => {});
     }
@@ -770,9 +783,9 @@ router.post("/tasks/:id/move", validate(MoveTaskSchema), async (req: Request, re
 
 // --- Audit ---
 
-router.get("/audit", (req: Request, res: Response) => {
+router.get("/audit", async (req: Request, res: Response) => {
   const { taskId, agentId, limit } = req.query;
-  const entries = readAuditLog({
+  const entries = await readAuditLog({
     taskId: taskId as string | undefined,
     agentId: agentId as string | undefined,
     limit: limit ? parseInt(limit as string, 10) : 100,
@@ -782,9 +795,9 @@ router.get("/audit", (req: Request, res: Response) => {
 
 // --- Stats ---
 
-router.get("/stats", (_req: Request, res: Response) => {
-  const tasks = store.getTasks({});
-  const agents = store.getAgents();
+router.get("/stats", async (_req: Request, res: Response) => {
+  const tasks = await store.getTasks({});
+  const agents = await store.getAgents();
   const nowMs = Date.now();
 
   // By status
@@ -850,15 +863,15 @@ router.get("/stats", (_req: Request, res: Response) => {
 
 // --- Agents ---
 
-router.get("/agents", (_req: Request, res: Response) => {
-  res.json(store.getAgents());
+router.get("/agents", async (_req: Request, res: Response) => {
+  res.json(await store.getAgents());
 });
 
 router.post("/agents", validate(RegisterAgentSchema), async (req: Request, res: Response) => {
   const { id, name, role, capabilities } = req.body;
 
   // Check for existing agent — no upsert allowed
-  const existing = store.getAgents().find(a => a.id === id);
+  const existing = (await store.getAgents()).find(a => a.id === id);
   if (existing) {
     return res.status(409).json({ error: `Agent "${id}" already exists` });
   }
