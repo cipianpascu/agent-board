@@ -80,17 +80,44 @@ node dist/index.js --port 8080 --data ./my-data
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--port` | `3456` | HTTP server port |
-| `--data` | `./data` | Directory for JSON data files |
+| `--data` | `./data` | Data directory for file/SQLite backends |
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
+| `AGENTBOARD_STORE` | Persistence backend: `file` (default), `sqlite`, or `postgres` |
+| `AGENTBOARD_DATA_DIR` | Data directory for the file/SQLite backends (default: `./data`) |
+| `DB_PATH` | Full path to the SQLite database file (default: `$AGENTBOARD_DATA_DIR/agentboard.db`) |
+| `DATABASE_URL` | PostgreSQL connection string (required when `AGENTBOARD_STORE=postgres`) |
 | `AGENTBOARD_API_KEYS` | Comma-separated `key:agentId` pairs for API authentication. Example: `sk-abc123:agent1,sk-def456:agent2` |
 | `OPENCLAW_HOOK_URL` | OpenClaw webhook URL for agent notifications (default: `http://localhost:18789/hooks/agent`) |
 | `OPENCLAW_HOOK_TOKEN` | Bearer token for OpenClaw webhook calls. Notifications disabled if not set. |
 | `AGENTBOARD_WEBHOOK_SECRET` | Secret for HMAC-SHA256 webhook signing. When set, all outbound webhooks include `X-AgentBoard-Signature` headers. |
 | `TEMPLATES_DIR` | Custom templates directory (default: `./templates`) |
+
+## Persistence
+
+Agent Board supports three storage backends, selected with `AGENTBOARD_STORE`:
+
+```bash
+# File (default) — JSON files
+npm start
+
+# SQLite
+AGENTBOARD_STORE=sqlite npm start
+
+# PostgreSQL
+AGENTBOARD_STORE=postgres DATABASE_URL=postgresql://user:password@host:5432/agentboard npm start
+```
+
+| Backend | Driver | Notes |
+|---------|--------|-------|
+| `file` | None | JSON files in `AGENTBOARD_DATA_DIR` with atomic writes and backups |
+| `sqlite` | `better-sqlite3` | Single local file, WAL mode, schema auto-created |
+| `postgres` | `pg` | Connection pooling, transactions, schema auto-created |
+
+The `--data` CLI flag sets the data directory for file/SQLite backends. `DB_PATH` overrides the SQLite file path. `DATABASE_URL` is required when using PostgreSQL.
 
 ## Real-Time Agent Communication
 
@@ -382,7 +409,8 @@ agent-board/
 │   ├── index.ts          # Express server, CLI args, static files
 │   ├── routes.ts         # REST API routes, auth middleware, OpenClaw webhooks
 │   ├── services.ts       # Business logic (move with deps/gates/retry/chain)
-│   ├── store.ts          # JSON file storage with async mutex + atomic writes
+│   ├── persistence/      # Pluggable Store implementations (file, SQLite, PostgreSQL)
+│   ├── store.ts          # Async Store facade and backend factory
 │   ├── schemas.ts        # Zod validation schemas
 │   ├── audit.ts          # Append-only JSONL audit log
 │   ├── types.ts          # TypeScript interfaces
@@ -402,7 +430,7 @@ agent-board/
 ### Data Flow
 
 ```
-Agent (REST/MCP) → Auth → Zod Validation → Service Layer → Store (mutex lock)
+Agent (REST/MCP) → Auth → Zod Validation → Service Layer → Store (file / SQLite / PostgreSQL)
                                                 │
                                                 ├── DAG dependency check
                                                 ├── Quality gate enforcement
@@ -414,8 +442,8 @@ Agent (REST/MCP) → Auth → Zod Validation → Service Layer → Store (mutex 
 
 ### Design Decisions
 
-- **Zero external database** — JSON files with atomic writes. Simple to deploy, backup, inspect, and version control.
-- **Per-file async mutex** — Concurrent API calls never corrupt data, without needing PostgreSQL or Redis.
+- **Pluggable persistence** — File (JSON), SQLite, or PostgreSQL backends via `AGENTBOARD_STORE`. File remains zero-config for simple deployments.
+- **Per-file async mutex** — Concurrent API calls never corrupt file data, without needing PostgreSQL or Redis.
 - **MCP-first** — AI agents interact through MCP tools naturally. No SDK, no client library.
 - **OpenClaw-native webhooks** — Agents get woken up instantly when tasks need attention. Works with any webhook consumer.
 - **Security hardened** — Path traversal protection, circular dependency detection, input validation on all routes, audit trail on all mutations.
@@ -461,7 +489,7 @@ CMD ["node", "dist/index.js"]
 npm install              # Install dependencies
 npm run build            # Compile TypeScript
 npm run dev              # TypeScript watch mode
-npm test                 # Run all 92 tests (Vitest)
+npm test                 # Run all 107 tests (Vitest)
 ```
 
 ### Tech Stack
@@ -472,7 +500,7 @@ npm test                 # Run all 92 tests (Vitest)
 - **MCP:** @modelcontextprotocol/sdk
 - **Tests:** Vitest + Supertest (107 tests)
 - **Dashboard:** Vanilla HTML/CSS/JS (no build step)
-- **Storage:** JSON files (no database required)
+- **Storage:** JSON files, SQLite, or PostgreSQL (all selected via `AGENTBOARD_STORE`)
 
 ## Contributing
 

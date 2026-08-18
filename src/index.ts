@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import express from "express";
 import path from "path";
-import { setDataDir } from "./store";
+import { initStore } from "./store";
 import apiRouter from "./routes";
 
 function parseArgs() {
@@ -18,14 +18,10 @@ function parseArgs() {
 }
 
 const { port, dataDir } = parseArgs();
-setDataDir(dataDir);
 
 const app = express();
 
 app.use(express.json({ limit: "1mb" }));
-
-// API routes
-app.use("/api", apiRouter);
 
 // Dashboard static files
 app.use(express.static(path.join(__dirname, "..", "dashboard")));
@@ -40,15 +36,22 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "..", "dashboard", "index.html"));
 });
 
-// Global error handler
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error("[error]", err.stack || err.message);
-  res.status(500).json({ error: "Internal server error" });
-});
+(async () => {
+  await initStore({ dataDir });
 
-app.listen(port, () => {
-  console.log(`Agent Board running at http://localhost:${port}`);
-  console.log(`Dashboard: http://localhost:${port}`);
-  console.log(`API: http://localhost:${port}/api`);
-  console.log(`Data dir: ${dataDir}`);
-});
+  // API routes
+  app.use("/api", apiRouter);
+
+  // Global error handler
+  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error("[error]", err.stack || err.message);
+    res.status(500).json({ error: "Internal server error" });
+  });
+
+  app.listen(port, () => {
+    console.log(`Agent Board running at http://localhost:${port}`);
+    console.log(`Dashboard: http://localhost:${port}`);
+    console.log(`API: http://localhost:${port}/api`);
+    console.log(`Data dir: ${dataDir}`);
+  });
+})();

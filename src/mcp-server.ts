@@ -20,7 +20,7 @@ server.tool(
   "List all projects with optional filters",
   { status: z.string().optional(), owner: z.string().optional() },
   async (args) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(store.getProjects(args), null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(await store.getProjects(args), null, 2) }],
   })
 );
 
@@ -29,9 +29,9 @@ server.tool(
   "Get project details with its tasks",
   { id: z.string() },
   async ({ id }) => {
-    const project = store.getProject(id);
+    const project = await store.getProject(id);
     if (!project) return { content: [{ type: "text" as const, text: "Project not found" }], isError: true };
-    const tasks = store.getTasks({ projectId: id });
+    const tasks = await store.getTasks({ projectId: id });
     return { content: [{ type: "text" as const, text: JSON.stringify({ ...project, tasks }, null, 2) }] };
   }
 );
@@ -156,7 +156,7 @@ server.tool(
   "Move a task to a different column (backlog, todo, doing, review, done, failed)",
   { id: z.string(), column: z.enum(["backlog", "todo", "doing", "review", "done", "failed"]) },
   async ({ id, column }) => {
-    const taskBefore = store.getTask(id);
+    const taskBefore = await store.getTask(id);
     const result = await moveTask(id, column);
     if ("error" in result && !("task" in result)) {
       return { content: [{ type: "text" as const, text: result.error }], isError: true };
@@ -200,7 +200,7 @@ server.tool(
   "List all comments for a task",
   { taskId: z.string() },
   async ({ taskId }) => {
-    const task = store.getTask(taskId);
+    const task = await store.getTask(taskId);
     if (!task) return { content: [{ type: "text" as const, text: "Task not found" }], isError: true };
     return { content: [{ type: "text" as const, text: JSON.stringify(task.comments, null, 2) }] };
   }
@@ -211,7 +211,7 @@ server.tool(
   "Get task summary with all comments (for agent context)",
   { taskId: z.string() },
   async ({ taskId }) => {
-    const task = store.getTask(taskId);
+    const task = await store.getTask(taskId);
     if (!task) return { content: [{ type: "text" as const, text: "Task not found" }], isError: true };
     const thread = {
       id: task.id,
@@ -237,7 +237,7 @@ server.tool(
     tag: z.string().optional(),
   },
   async (args) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(store.getTasks(args), null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(await store.getTasks(args), null, 2) }],
   })
 );
 
@@ -246,7 +246,7 @@ server.tool(
   "List tasks assigned to a specific agent",
   { agentId: z.string() },
   async ({ agentId }) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(store.getTasks({ assignee: agentId }), null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(await store.getTasks({ assignee: agentId }), null, 2) }],
   })
 );
 
@@ -255,7 +255,7 @@ server.tool(
   "Delete a task by ID",
   { id: z.string() },
   async ({ id }) => {
-    const task = store.getTask(id);
+    const task = await store.getTask(id);
     const deleted = await store.deleteTask(id);
     if (!deleted) return { content: [{ type: "text" as const, text: "Task not found" }], isError: true };
     appendAuditLog({
@@ -275,7 +275,7 @@ server.tool(
   "Delete a project and all its tasks",
   { id: z.string() },
   async ({ id }) => {
-    const project = store.getProject(id);
+    const project = await store.getProject(id);
     const deleted = await store.deleteProject(id);
     if (!deleted) return { content: [{ type: "text" as const, text: "Project not found" }], isError: true };
     appendAuditLog({
@@ -295,7 +295,7 @@ async function main() {
   // Parse --data flag
   const dataIdx = process.argv.indexOf("--data");
   if (dataIdx !== -1 && process.argv[dataIdx + 1]) {
-    store.setDataDir(process.argv[dataIdx + 1]);
+    await store.initStore({ dataDir: process.argv[dataIdx + 1] });
   }
 
   const transport = new StdioServerTransport();
