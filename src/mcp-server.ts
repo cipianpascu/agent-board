@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createServer } from "http";
 import { z } from "zod";
 import * as store from "./store";
 import { generateId, now } from "./utils";
@@ -291,15 +293,59 @@ server.tool(
 
 // --- Start ---
 
+function parseArgs() {
+  const args = process.argv.slice(2);
+  const dataIdx = args.indexOf("--data");
+  const dataDir = dataIdx !== -1 && args[dataIdx + 1] ? args[dataIdx + 1] : undefined;
+  const useStdio = args.includes("--stdio") || process.env.MCP_TRANSPORT === "stdio";
+  const port = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT, 10) : 3457;
+  return { dataDir, useStdio, port };
+}
+
 async function main() {
-  // Parse --data flag
-  const dataIdx = process.argv.indexOf("--data");
-  if (dataIdx !== -1 && process.argv[dataIdx + 1]) {
-    await store.initStore({ dataDir: process.argv[dataIdx + 1] });
+  const { dataDir, useStdio, port } = parseArgs();
+  if (dataDir) {
+    await store.initStore({ dataDir });
   }
 
-  const transport = new StdioServerTransport();
+  if (useStdio) {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.log("[mcp] stdio transport connected");
+    return;
+  }
+
+  // Stateless Streamable HTTP: no session tracking, each request handled independently
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  });
   await server.connect(transport);
+
+  const httpServer = createServer((req, res) => {
+    if (req.url?.startsWith("/mcp")) {
+      transport.handleRequest(req, res).catch((err) => {
+        console.error("[mcp] handleRequest error:", err);
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.end("Internal server error");
+        }
+      });
+    } else {
+      res.statusCode = 404;
+      res.end("Not found");
+    }
+  });
+
+  const shutdown = async () => {
+    httpServer.close(() => {});
+    await transport.close();
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+
+  httpServer.listen(port, () => {
+    console.log(`[mcp] stateless Streamable HTTP server listening on http://localhost:${port}/mcp`);
+  });
 }
 
 main().catch((err) => {

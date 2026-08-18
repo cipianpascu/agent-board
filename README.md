@@ -357,14 +357,35 @@ GET /api/client/:projectId                 # Read-only sanitized project data
 
 ## MCP Server
 
-Agent Board includes a full [Model Context Protocol](https://modelcontextprotocol.io/) server for AI agent integration. Agents can manage tasks through natural MCP tool calls — no HTTP client needed.
+Agent Board includes a full [Model Context Protocol](https://modelcontextprotocol.io/) server for AI agent integration. By default it now runs as a **stateless Streamable HTTP** server, with an optional `--stdio` fallback for local process-based clients such as Claude Desktop.
 
 ```bash
-npm run mcp                                # default data dir
-node dist/mcp-server.js --data ./data      # custom data dir
+npm run mcp                                     # stateless HTTP, default port 3457
+node dist/mcp-server.js --data ./data           # stateless HTTP with custom data dir
+node dist/mcp-server.js --stdio --data ./data   # stdio transport for Claude Desktop
 ```
 
+| Flag/Env | Default | Description |
+|----------|---------|-------------|
+| `--stdio` | `false` | Use `StdioServerTransport` instead of stateless HTTP |
+| `MCP_TRANSPORT=stdio` | `http` | Set to `stdio` without the flag |
+| `MCP_PORT` | `3457` | HTTP port for Streamable HTTP |
+| `--data` | `./data` | Data directory for file/SQLite backends |
+
+### Stateless HTTP endpoint
+
+When running without `--stdio`, the server exposes the MCP endpoint at:
+
+```
+POST http://localhost:3457/mcp
+GET  http://localhost:3457/mcp
+```
+
+The transport is created with `sessionIdGenerator: undefined`, so no session state is maintained between requests.
+
 ### Claude Desktop / Claude Code Configuration
+
+For local stdio mode:
 
 ```json
 {
@@ -373,12 +394,15 @@ node dist/mcp-server.js --data ./data      # custom data dir
       "command": "node",
       "args": [
         "/path/to/agent-board/dist/mcp-server.js",
-        "--data", "/path/to/agent-board/data"
+        "--data", "/path/to/agent-board/data",
+        "--stdio"
       ]
     }
   }
 }
 ```
+
+For remote HTTP mode, configure your MCP client to connect to `http://localhost:3457/mcp`.
 
 ### MCP Tools (12)
 
