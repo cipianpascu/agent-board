@@ -40,6 +40,6 @@ COPY --from=build /app/package.json ./package.json
 # Writable directories (/tmp, /app/data) are mounted as emptyDir volumes in Kubernetes.
 USER appuser
 
-EXPOSE 3456
+EXPOSE 3456 3457
 
 CMD ["node", "dist/index.js"]

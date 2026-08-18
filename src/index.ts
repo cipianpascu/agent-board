@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import express from "express";
+import { Server } from "http";
 import path from "path";
-import { initStore } from "./store";
+import { closeStore, initStore } from "./store";
 import apiRouter from "./routes";
+import { McpHttpServer, startMcpHttpServer } from "./mcp-server";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -40,6 +42,8 @@ app.get("/", (_req, res) => {
 
 (async () => {
   await initStore({ dataDir });
+  const mcpEnabled = process.env.MCP_ENABLED !== "false";
+  const mcpServer = mcpEnabled ? await startMcpHttpServer() : undefined;
 
   // API routes
   app.use("/api", apiRouter);
@@ -50,10 +54,27 @@ app.get("/", (_req, res) => {
     res.status(500).json({ error: "Internal server error" });
   });
 
-  app.listen(port, host, () => {
+  const httpServer = app.listen(port, host, () => {
     console.log(`Agent Board running at http://${host}:${port}`);
     console.log(`Dashboard: http://localhost:${port}`);
     console.log(`API: http://localhost:${port}/api`);
     console.log(`Data dir: ${dataDir}`);
   });
+
+  installShutdown(httpServer, mcpServer);
 })();
+
+function installShutdown(httpServer: Server, mcpServer?: McpHttpServer): void {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await Promise.all([
+      new Promise<void>((resolve, reject) => httpServer.close(err => err ? reject(err) : resolve())),
+      mcpServer?.close() ?? Promise.resolve(),
+    ]);
+    await closeStore();
+  };
+  process.once("SIGTERM", () => { shutdown().catch(err => console.error("Shutdown error:", err)); });
+  process.once("SIGINT", () => { shutdown().catch(err => console.error("Shutdown error:", err)); });
+}

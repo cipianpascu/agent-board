@@ -386,6 +386,11 @@ node dist/mcp-server.js --data ./data           # stateless HTTP with custom dat
 node dist/mcp-server.js --stdio --data ./data   # stdio transport for Claude Desktop
 ```
 
+The normal Agent Board application starts both listeners in one process: the
+API/UI on port `3456` and HTTP MCP on port `3457`. Both use the same initialized
+store and PostgreSQL connection pool. `mcp-server.js` remains available only for
+standalone MCP and stdio integrations.
+
 | Flag/Env | Default | Description |
 |----------|---------|-------------|
 | `--stdio` | `false` | Use `StdioServerTransport` instead of stateless HTTP |
@@ -464,7 +469,7 @@ agent-board/
 │   ├── audit.ts          # Append-only JSONL audit log
 │   ├── types.ts          # TypeScript interfaces
 │   ├── utils.ts          # ID generation, timestamp helpers
-│   └── mcp-server.ts     # MCP stdio server (12 tools)
+│   └── mcp-server.ts     # MCP tools and HTTP/stdio transports
 ├── dashboard/
 │   ├── index.html        # Kanban dashboard (drag-and-drop)
 │   ├── client.html       # Read-only client view

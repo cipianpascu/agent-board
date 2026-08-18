@@ -10,6 +10,7 @@ data:
   AGENTBOARD_STORE: "postgres"
   MIGRATIONS_DIR: "/app/migrations/postgres"
   MCP_PORT: "3457"
+  MCP_ENABLED: {{ .Values.mcp.enabled | quote }}
   MCP_TRANSPORT: "http"
   OPENCLAW_HOOK_URL: {{ .Values.openclaw.hookUrl | quote }}
   {{- if .Values.openclaw.agentSessionMap }}
