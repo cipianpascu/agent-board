@@ -3,6 +3,19 @@ entries:
   agent-board:
   - apiVersion: v2
     appVersion: 0.1.0
+    created: "2026-08-18T15:03:47.43716658Z"
+    description: A Helm chart for the Agent Board multi-agent task orchestration service
+    digest: 972befc9008dadd31798308fd542656c3a5b0b38ad02cfb9a83126ab1adb5153
+    home: https://github.com/cipianpascu/agent-board
+    name: agent-board
+    sources:
+    - https://github.com/cipianpascu/agent-board
+    type: application
+    urls:
+    - agent-board-0.3.0.tgz
+    version: 0.3.0
+  - apiVersion: v2
+    appVersion: 0.1.0
     created: "2026-08-18T09:17:29.83034029Z"
     description: A Helm chart for the Agent Board multi-agent task orchestration service
     digest: 6b24656e7f12b035587895871f3aa5290d2fedf0b19da3f996ef5a4a49bb6141
@@ -27,4 +40,4 @@ entries:
     urls:
     - agent-board-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-18T09:17:29.830350761Z"
+generated: "2026-08-18T15:03:47.437180176Z"
