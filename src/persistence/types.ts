@@ -27,6 +27,7 @@ export interface Store {
   getTask(id: string): Promise<Task | undefined>;
   createTask(task: Task): Promise<Task>;
   updateTask(id: string, updates: Partial<Task>): Promise<Task | undefined>;
+  claimTask(taskId: string, agentId: string, leaseUntil: string, heartbeatAt: string): Promise<Task | undefined>;
   deleteTask(id: string): Promise<boolean>;
   addComment(taskId: string, comment: { author: string; text: string }): Promise<Task | undefined>;
 

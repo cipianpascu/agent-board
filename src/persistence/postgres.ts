@@ -39,6 +39,9 @@ export interface TaskRow {
   max_retries: number;
   requires_review: boolean;
   duration_ms: number | null;
+  claimed_by: string | null;
+  lease_until: string | null;
+  heartbeat_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -110,6 +113,9 @@ function rowToTask(row: TaskRow): Task {
     maxRetries: row.max_retries,
     requiresReview: row.requires_review,
     durationMs: row.duration_ms ?? undefined,
+    claimedBy: row.claimed_by ?? undefined,
+    leaseUntil: row.lease_until ?? undefined,
+    heartbeatAt: row.heartbeat_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -166,6 +172,9 @@ export async function migratePostgres(pool: Pool): Promise<void> {
       max_retries     INTEGER NOT NULL DEFAULT 2,
       requires_review BOOLEAN NOT NULL DEFAULT FALSE,
       duration_ms     INTEGER,
+      claimed_by      TEXT,
+      lease_until     TEXT,
+      heartbeat_at    TEXT,
       created_at      TEXT NOT NULL,
       updated_at      TEXT NOT NULL
     )
@@ -309,8 +318,8 @@ export class PostgresStore implements Store {
         id, project_id, title, description, status, column_id, assignee, created_by, priority,
         tags, dependencies, subtasks, comments, next_task, parent_task_id, deadline,
         input_path, output_path, started_at, completed_at, failed_at, retry_count, max_retries,
-        requires_review, duration_ms, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`,
+        requires_review, duration_ms, claimed_by, lease_until, heartbeat_at, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)`,
       [
         task.id,
         task.projectId,
@@ -337,11 +346,34 @@ export class PostgresStore implements Store {
         task.maxRetries ?? 2,
         !!task.requiresReview,
         task.durationMs ?? null,
+        task.claimedBy ?? null,
+        task.leaseUntil ?? null,
+        task.heartbeatAt ?? null,
         task.createdAt,
         task.updatedAt,
       ]
     );
     return task;
+  }
+
+  async claimTask(taskId: string, agentId: string, leaseUntil: string, heartbeatAt: string): Promise<Task | undefined> {
+    const now = new Date().toISOString();
+    const { rows } = await this.pool.query<TaskRow>(`
+      UPDATE tasks
+      SET
+        column_id = 'doing',
+        status = 'doing',
+        claimed_by = $2,
+        lease_until = $3,
+        heartbeat_at = $4,
+        started_at = COALESCE(started_at, $5),
+        updated_at = $5
+      WHERE id = $1
+        AND column_id = 'todo'
+        AND (claimed_by IS NULL OR lease_until IS NULL OR lease_until < $5)
+      RETURNING *
+    `, [taskId, agentId, leaseUntil, heartbeatAt, now]);
+    return rows[0] ? rowToTask(rows[0]) : undefined;
   }
 
   async updateTask(id: string, updates: Partial<Task>): Promise<Task | undefined> {
@@ -387,8 +419,11 @@ export class PostgresStore implements Store {
           max_retries = $22,
           requires_review = $23,
           duration_ms = $24,
-          updated_at = $25
-        WHERE id = $26`,
+          claimed_by = $25,
+          lease_until = $26,
+          heartbeat_at = $27,
+          updated_at = $28
+        WHERE id = $29`,
         [
           merged.projectId,
           merged.title,
@@ -414,6 +449,9 @@ export class PostgresStore implements Store {
           merged.maxRetries ?? 2,
           !!merged.requiresReview,
           merged.durationMs ?? null,
+          merged.claimedBy ?? null,
+          merged.leaseUntil ?? null,
+          merged.heartbeatAt ?? null,
           merged.updatedAt,
           id,
         ]

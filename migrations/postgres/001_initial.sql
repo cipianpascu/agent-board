@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   max_retries     INTEGER NOT NULL DEFAULT 2,
   requires_review BOOLEAN NOT NULL DEFAULT FALSE,
   duration_ms     INTEGER,
+  claimed_by      TEXT,
+  lease_until     TEXT,
+  heartbeat_at    TEXT,
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
 );

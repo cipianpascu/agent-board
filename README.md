@@ -93,7 +93,9 @@ node dist/index.js --port 8080 --data ./my-data
 | `AGENTBOARD_API_KEYS` | Comma-separated `key:agentId` pairs for API authentication. Example: `sk-abc123:agent1,sk-def456:agent2` |
 | `OPENCLAW_HOOK_URL` | OpenClaw webhook URL for agent notifications (default: `http://localhost:18789/hooks/agent`) |
 | `OPENCLAW_HOOK_TOKEN` | Bearer token for OpenClaw webhook calls. Notifications disabled if not set. |
+| `OPENCLAW_AGENT_SESSION_MAP` | Optional JSON map from board assignee IDs to OpenClaw session keys, e.g. `{"main":"agent:main:main"}`. If unset, assignee IDs pass through unchanged. |
 | `AGENTBOARD_WEBHOOK_SECRET` | Secret for HMAC-SHA256 webhook signing. When set, all outbound webhooks include `X-AgentBoard-Signature` headers. |
+| `AGENTBOARD_LEASE_DURATION_MS` | Claim/lease duration for `todo` tasks in milliseconds (default: `900000` = 15 minutes) |
 | `TEMPLATES_DIR` | Custom templates directory (default: `./templates`) |
 
 ## Persistence
@@ -206,14 +208,28 @@ If tasks found, pick the highest priority one and start working.
 
 ### OpenClaw Configuration
 
-Set the webhook token in your Agent Board service to match your OpenClaw hooks token:
+Set the webhook token in your Agent Board service to match your OpenClaw hooks token. In Kubernetes, use the OpenClaw service DNS name instead of `localhost`:
 
 ```bash
-OPENCLAW_HOOK_URL=http://localhost:18789/hooks/agent
+OPENCLAW_HOOK_URL=http://oc-vr.openclaw.svc.cluster.local:18789/hooks/agent
 OPENCLAW_HOOK_TOKEN=your-openclaw-hooks-token
 ```
 
-Agent Board maps agent IDs to OpenClaw session keys (configurable in `routes.ts`).
+If your board assignee IDs match OpenClaw agent IDs exactly, no mapping is needed. Otherwise, set `OPENCLAW_AGENT_SESSION_MAP` to a JSON object:
+
+```bash
+OPENCLAW_AGENT_SESSION_MAP='{"main":"agent:main:main","vr":"agent:vr:main"}'
+```
+
+OpenClaw must opt-in to the hooks endpoint. Add the `hooks` block to OpenClaw’s config with the same token:
+
+```yaml
+hooks:
+  enabled: true
+  secret: your-openclaw-hooks-token
+```
+
+See the [OpenClaw webhook docs](https://docs.openclaw.ai/webhook) for details.
 
 ## Dashboard
 
@@ -370,6 +386,7 @@ node dist/mcp-server.js --stdio --data ./data   # stdio transport for Claude Des
 | `--stdio` | `false` | Use `StdioServerTransport` instead of stateless HTTP |
 | `MCP_TRANSPORT=stdio` | `http` | Set to `stdio` without the flag |
 | `MCP_PORT` | `3457` | HTTP port for Streamable HTTP |
+| `AGENTBOARD_API_KEYS` | _(none)_ | HTTP MCP endpoint requires `X-API-Key` header to match one of the configured `key:agentId` pairs when set |
 | `--data` | `./data` | Data directory for file/SQLite backends |
 
 ### Stateless HTTP endpoint
@@ -404,7 +421,7 @@ For local stdio mode:
 
 For remote HTTP mode, configure your MCP client to connect to `http://localhost:3457/mcp`.
 
-### MCP Tools (12)
+### MCP Tools (15)
 
 | Tool | Description |
 |------|-------------|
@@ -422,6 +439,9 @@ For remote HTTP mode, configure your MCP client to connect to `http://localhost:
 | `board_list_comments` | List comments on a task |
 | `board_get_task_thread` | Get task summary + full comment thread |
 | `board_delete_project` | Delete a project and all its tasks |
+| `board_claim_task` | Atomically claim an unclaimed todo task and move it to doing |
+| `board_renew_task_lease` | Renew the lease on a claimed task |
+| `board_release_task` | Release a claimed task back to todo |
 
 All MCP mutations are logged to the audit trail.
 

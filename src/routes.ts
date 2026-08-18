@@ -6,12 +6,13 @@ import { z } from "zod";
 import * as store from "./store";
 import { generateId, now } from "./utils";
 import { Task, TaskColumn, TaskPriority, NextTask, AgentStats, BoardStats } from "./types";
-import { moveTask } from "./services";
+import { moveTask, claimTask, renewTaskLease, releaseTask } from "./services";
 import { appendAuditLog, readAuditLog } from "./audit";
 import {
   CreateTaskSchema,
   UpdateTaskSchema,
   MoveTaskSchema,
+  ClaimTaskSchema,
   CreateProjectSchema,
   CreateCommentSchema,
   RegisterAgentSchema,
@@ -193,22 +194,23 @@ export function signPayload(body: Record<string, unknown>, secret: string): { si
   return { signature: `sha256=${hmac}`, timestamp };
 }
 
-// Agent ID -> OpenClaw agent session key mapping
-const AGENT_SESSION_MAP: Record<string, string> = {
-  "jarvx": "agent:main:main",
-  "eff": "agent:eff:main",
-  "agency": "agent:agency:main",
-  "auteur-augmente": "agent:auteur-augmente:main",
-  "content-creator": "agent:content:main",
-  "sales-agent": "agent:sales:main",
-  "research-agent": "agent:research:main",
-  "coding-agent": "agent:coding:main",
-  "support": "agent:support:main",
-  "onboarding": "agent:onboarding:main",
-  "community": "agent:community:main",
-  "ops": "agent:ops:main",
-  "infra-agent": "agent:infra:main",
-};
+// Agent ID -> OpenClaw agent session key mapping.
+// Set OPENCLAW_AGENT_SESSION_MAP to a JSON object such as {"main":"agent:main:main","vr":"agent:vr:main"}
+// If unset, the board assignee ID is passed through unchanged.
+function loadAgentSessionMap(): Record<string, string> {
+  const raw = process.env.OPENCLAW_AGENT_SESSION_MAP;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, string>;
+  } catch {
+    console.error("[webhook] Invalid OPENCLAW_AGENT_SESSION_MAP JSON; using empty map");
+    return {};
+  }
+}
+
+const AGENT_SESSION_MAP = loadAgentSessionMap();
 
 // Map board assignee names to gateway agent IDs
 function resolveAgentId(assignee: string): string {
@@ -277,8 +279,9 @@ async function notifyAgent(task: Task, context?: string, event?: string): Promis
 }
 
 async function sendTaskUpdateWebhook(task: Task): Promise<boolean> {
-  const webhookUrl = process.env.OPENCLAW_HOOK_URL || "http://localhost:18789/hooks";
-  const webhookToken = process.env.OPENCLAW_HOOK_TOKEN || "";
+  const webhookUrl = OPENCLAW_HOOK_URL;
+  const webhookToken = getHookToken();
+  if (!webhookToken) return false;
 
   const payload = {
     event: "task.updated",
@@ -725,11 +728,11 @@ router.get("/client/:projectId", async (req: Request, res: Response) => {
 // --- Move Task (convenience) ---
 
 router.post("/tasks/:id/move", validate(MoveTaskSchema), async (req: Request, res: Response) => {
-  const { column } = req.body;
+  const { column, agentId } = req.body;
   const taskBefore = await store.getTask(req.params.id as string);
   const fromColumn = taskBefore?.column;
 
-  const result = await moveTask(req.params.id as string, column);
+  const result = await moveTask(req.params.id as string, column, agentId || getAgentId(req));
 
   if ("error" in result && !("task" in result)) {
     const status = result.error === "Task not found" ? 404 : 400;
@@ -779,6 +782,53 @@ router.post("/tasks/:id/move", validate(MoveTaskSchema), async (req: Request, re
   }
 
   res.json(moveResult);
+});
+
+// --- Task lease / claim ---
+
+router.post("/tasks/:id/claim", validate(ClaimTaskSchema), async (req: Request, res: Response) => {
+  const { agentId, durationMs } = req.body;
+  const result = await claimTask(req.params.id as string, agentId, durationMs);
+  if ("error" in result) return res.status(400).json(result);
+  appendAuditLog({
+    timestamp: now(),
+    agentId,
+    action: "task.claim",
+    taskId: result.task.id,
+    projectId: result.task.projectId,
+    to: result.task.column,
+    details: `Task claimed by ${agentId} until ${result.task.leaseUntil}`,
+  });
+  res.json(result);
+});
+
+router.post("/tasks/:id/renew", validate(ClaimTaskSchema), async (req: Request, res: Response) => {
+  const { agentId, durationMs } = req.body;
+  const result = await renewTaskLease(req.params.id as string, agentId, durationMs);
+  if ("error" in result) {
+    const status = result.error === "Task not found" ? 404 : 400;
+    return res.status(status).json(result);
+  }
+  res.json(result);
+});
+
+router.post("/tasks/:id/release", validate(ClaimTaskSchema), async (req: Request, res: Response) => {
+  const { agentId } = req.body;
+  const result = await releaseTask(req.params.id as string, agentId);
+  if ("error" in result) {
+    const status = result.error === "Task not found" ? 404 : 400;
+    return res.status(status).json(result);
+  }
+  appendAuditLog({
+    timestamp: now(),
+    agentId,
+    action: "task.release",
+    taskId: result.task.id,
+    projectId: result.task.projectId,
+    to: result.task.column,
+    details: `Task released by ${agentId}`,
+  });
+  res.json(result);
 });
 
 // --- Audit ---

@@ -20,6 +20,8 @@ export const getTasks = (filters?: TaskFilters): Promise<Task[]> => getStore().g
 export const getTask = (id: string): Promise<Task | undefined> => getStore().getTask(id);
 export const createTask = (task: Task): Promise<Task> => getStore().createTask(task);
 export const updateTask = (id: string, updates: Partial<Task>): Promise<Task | undefined> => getStore().updateTask(id, updates);
+export const claimTask = (taskId: string, agentId: string, leaseUntil: string, heartbeatAt: string): Promise<Task | undefined> =>
+  getStore().claimTask(taskId, agentId, leaseUntil, heartbeatAt);
 export const deleteTask = (id: string): Promise<boolean> => getStore().deleteTask(id);
 export const addComment = (taskId: string, comment: { author: string; text: string }): Promise<Task | undefined> => getStore().addComment(taskId, comment);
 

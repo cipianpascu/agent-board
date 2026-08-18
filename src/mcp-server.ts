@@ -2,12 +2,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer } from "http";
+import { createServer, IncomingMessage } from "http";
 import { z } from "zod";
 import * as store from "./store";
 import { generateId, now } from "./utils";
 import { Task, TaskColumn } from "./types";
-import { moveTask } from "./services";
+import { moveTask, claimTask, renewTaskLease, releaseTask } from "./services";
 import { appendAuditLog } from "./audit";
 
 const server = new McpServer({
@@ -155,24 +155,75 @@ server.tool(
 
 server.tool(
   "board_move_task",
-  "Move a task to a different column (backlog, todo, doing, review, done, failed)",
-  { id: z.string(), column: z.enum(["backlog", "todo", "doing", "review", "done", "failed"]) },
-  async ({ id, column }) => {
+  "Move a task to a different column (backlog, todo, doing, review, done, failed). Optional agentId enforces ownership of an active lease.",
+  { id: z.string(), column: z.enum(["backlog", "todo", "doing", "review", "done", "failed"]), agentId: z.string().optional() },
+  async ({ id, column, agentId }) => {
     const taskBefore = await store.getTask(id);
-    const result = await moveTask(id, column);
+    const result = await moveTask(id, column, agentId);
     if ("error" in result && !("task" in result)) {
       return { content: [{ type: "text" as const, text: result.error }], isError: true };
     }
     const moveResult = result as { task: Task; retried: boolean; chainedTask?: Task };
     appendAuditLog({
       timestamp: now(),
-      agentId: "mcp",
+      agentId: agentId || "mcp",
       action: "task.move",
       taskId: moveResult.task.id,
       projectId: moveResult.task.projectId,
       from: taskBefore?.column,
       to: column,
       details: `[MCP] Moved task from ${taskBefore?.column} to ${column}`,
+    });
+    return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  "board_claim_task",
+  "Atomically claim an unclaimed todo task and move it to doing",
+  { id: z.string(), agentId: z.string(), durationMs: z.number().optional() },
+  async ({ id, agentId, durationMs }) => {
+    const result = await claimTask(id, agentId, durationMs);
+    if ("error" in result) return { content: [{ type: "text" as const, text: result.error }], isError: true };
+    appendAuditLog({
+      timestamp: now(),
+      agentId,
+      action: "task.claim",
+      taskId: result.task.id,
+      projectId: result.task.projectId,
+      to: result.task.column,
+      details: `[MCP] Task claimed by ${agentId} until ${result.task.leaseUntil}`,
+    });
+    return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  "board_renew_task_lease",
+  "Renew the lease on a claimed task",
+  { id: z.string(), agentId: z.string(), durationMs: z.number().optional() },
+  async ({ id, agentId, durationMs }) => {
+    const result = await renewTaskLease(id, agentId, durationMs);
+    if ("error" in result) return { content: [{ type: "text" as const, text: result.error }], isError: true };
+    return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+server.tool(
+  "board_release_task",
+  "Release a claimed task back to todo",
+  { id: z.string(), agentId: z.string() },
+  async ({ id, agentId }) => {
+    const result = await releaseTask(id, agentId);
+    if ("error" in result) return { content: [{ type: "text" as const, text: result.error }], isError: true };
+    appendAuditLog({
+      timestamp: now(),
+      agentId,
+      action: "task.release",
+      taskId: result.task.id,
+      projectId: result.task.projectId,
+      to: result.task.column,
+      details: `[MCP] Task released by ${agentId}`,
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
   }
@@ -291,6 +342,29 @@ server.tool(
   }
 );
 
+// --- Auth ---
+
+function loadApiKeyMap(): Map<string, string> | undefined {
+  const raw = process.env.AGENTBOARD_API_KEYS;
+  if (!raw) return undefined;
+  const map = new Map<string, string>();
+  for (const part of raw.split(",")) {
+    const [key, agentId] = part.trim().split(":");
+    if (key && agentId) map.set(key, agentId);
+  }
+  return map;
+}
+
+const apiKeyMap = loadApiKeyMap();
+
+function isAuthorized(req: IncomingMessage): boolean {
+  if (!apiKeyMap) return true;
+  const header = req.headers["x-api-key"];
+  const key = Array.isArray(header) ? header[0] : header;
+  if (!key) return false;
+  return apiKeyMap.has(key);
+}
+
 // --- Start ---
 
 function parseArgs() {
@@ -323,6 +397,11 @@ async function main() {
 
   const httpServer = createServer((req, res) => {
     if (req.url?.startsWith("/mcp")) {
+      if (!isAuthorized(req)) {
+        res.statusCode = 401;
+        res.end("Unauthorized");
+        return;
+      }
       transport.handleRequest(req, res).catch((err) => {
         console.error("[mcp] handleRequest error:", err);
         if (!res.headersSent) {

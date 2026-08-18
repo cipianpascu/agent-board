@@ -206,6 +206,34 @@ export class FileStore implements Store {
     return result;
   }
 
+  async claimTask(taskId: string, agentId: string, leaseUntil: string, heartbeatAt: string): Promise<Task | undefined> {
+    let result: Task | undefined;
+    await this.withLock<Task>("tasks.json", (tasks) => {
+      const idx = tasks.findIndex(t => t.id === taskId);
+      if (idx === -1) { result = undefined; return tasks; }
+      const task = tasks[idx];
+      const now = new Date().toISOString();
+      if (task.column !== "todo" || (task.claimedBy && task.leaseUntil && task.leaseUntil > now)) {
+        result = undefined;
+        return tasks;
+      }
+      const updated = {
+        ...task,
+        column: "doing" as const,
+        status: "doing" as const,
+        claimedBy: agentId,
+        leaseUntil,
+        heartbeatAt,
+        startedAt: task.startedAt ?? now,
+        updatedAt: now,
+      };
+      tasks[idx] = updated;
+      result = updated;
+      return tasks;
+    });
+    return result;
+  }
+
   async deleteTask(id: string): Promise<boolean> {
     let found = false;
     await this.withLock<Task>("tasks.json", (tasks) => {
