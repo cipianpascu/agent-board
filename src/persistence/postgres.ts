@@ -185,6 +185,22 @@ export async function migratePostgres(pool: Pool): Promise<void> {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_column ON tasks(column)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS audit_events (
+      id          SERIAL PRIMARY KEY,
+      timestamp   TEXT NOT NULL,
+      agent_id    TEXT NOT NULL,
+      action      TEXT NOT NULL,
+      task_id     TEXT,
+      project_id  TEXT,
+      from_col    TEXT,
+      to_col      TEXT,
+      details     TEXT
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_task_id ON audit_events(task_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_agent_id ON audit_events(agent_id)`);
 }
 
 export class PostgresStore implements Store {

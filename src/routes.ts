@@ -772,7 +772,7 @@ router.post("/tasks/:id/move", validate(MoveTaskSchema), async (req: Request, re
 
 router.get("/audit", async (req: Request, res: Response) => {
   const { taskId, agentId, limit } = req.query;
-  const entries = readAuditLog({
+  const entries = await readAuditLog({
     taskId: taskId as string | undefined,
     agentId: agentId as string | undefined,
     limit: limit ? parseInt(limit as string, 10) : 100,

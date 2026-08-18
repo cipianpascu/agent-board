@@ -5,6 +5,7 @@ import { FileStore } from "./file";
 import { SqliteStore, migrateSqlite } from "./sqlite";
 import { PostgresStore, migratePostgres } from "./postgres";
 import { Store } from "./types";
+import { FileAuditStore, PostgresAuditStore, setAuditStore } from "./audit";
 
 let activeStore: Store | undefined;
 
@@ -67,6 +68,7 @@ export async function initStore(options: InitOptions = {}): Promise<Store> {
     await migratePostgres(pool);
     const store = new PostgresStore(pool);
     setStore(store);
+    setAuditStore(new PostgresAuditStore(pool));
     console.log("[db] PostgreSQL backend active");
     return store;
   }
@@ -76,12 +78,14 @@ export async function initStore(options: InitOptions = {}): Promise<Store> {
     const db = initSqliteDatabase(dbPath);
     const store = new SqliteStore(db);
     setStore(store);
+    setAuditStore(new FileAuditStore(dataDir));
     console.log("[db] SQLite backend active");
     return store;
   }
 
   const store = new FileStore(dataDir);
   setStore(store);
+  setAuditStore(new FileAuditStore(dataDir));
   console.log(`[db] File backend active at ${dataDir}`);
   return store;
 }
