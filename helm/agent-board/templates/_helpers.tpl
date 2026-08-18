@@ -63,13 +63,13 @@ Create the name of the service account to use
 Resolve the image reference. digest takes precedence over tag.
 */}}
 {{- define "agent-board.image" -}}
-{{- if .Values.image.digest }}
-"{{ .Values.image.repository }}@{{ .Values.image.digest }}"
-{{- else if .Values.image.tag }}
-"{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-{{- else }}
-"{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
-{{- end }}
+{{- if .Values.image.digest -}}
+{{ .Values.image.repository }}@{{ .Values.image.digest }}
+{{- else if .Values.image.tag -}}
+{{ .Values.image.repository }}:{{ .Values.image.tag }}
+{{- else -}}
+{{ .Values.image.repository }}:{{ .Chart.AppVersion }}
+{{- end -}}
 {{- end }}
 
 {{/*

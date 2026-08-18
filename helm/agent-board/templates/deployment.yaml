@@ -37,8 +37,10 @@ spec:
             - secretRef:
                 name: {{ include "agent-board.secretName" . }}
                 optional: true
+          {{- with .Values.env }}
           env:
-            {{- toYaml .Values.env | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- if or .Values.probes.liveness .Values.probes.readiness .Values.probes.startup }}
           livenessProbe:
             httpGet:
