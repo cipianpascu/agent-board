@@ -1,0 +1,6 @@
+owner: cipianpascu
+git-repo: agent-board
+package-path: .cr-release-packages
+index-path: index.yaml
+pages-branch: gh-pages
+skip-existing: true
