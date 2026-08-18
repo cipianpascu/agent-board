@@ -132,11 +132,10 @@ probes:
     timeoutSeconds: 5
     failureThreshold: 12
 
-# MCP sidecar
+# MCP listener in the main Agent Board process.
 mcp:
-  enabled: false
+  enabled: true
   port: 3457
-  resources: {}
 
 # OpenClaw webhook integration
 openclaw:

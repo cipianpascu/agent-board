@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer, IncomingMessage } from "http";
+import { createServer, IncomingMessage, Server } from "http";
 import { AsyncLocalStorage } from "async_hooks";
 import { z } from "zod";
 import * as store from "./store";
@@ -391,11 +391,82 @@ function parseArgs() {
   return { dataDir, useStdio, port };
 }
 
+export interface McpHttpServer {
+  close(): Promise<void>;
+}
+
+export interface McpHttpServerOptions {
+  port?: number;
+  host?: string;
+}
+
+// Run MCP on a second listener in the main Agent Board process. It shares the
+// already-initialized store, database pool, audit sink, and shutdown lifecycle.
+export async function startMcpHttpServer(options: McpHttpServerOptions = {}): Promise<McpHttpServer> {
+  const port = options.port ?? (process.env.MCP_PORT ? parseInt(process.env.MCP_PORT, 10) : 3457);
+  const host = options.host ?? process.env.MCP_HOST ?? process.env.HOST ?? "0.0.0.0";
+  if (Number.isNaN(port)) throw new Error("MCP_PORT must be a valid port number");
+
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  await server.connect(transport);
+
+  const httpServer = createServer((req, res) => {
+    if (!req.url?.startsWith("/mcp")) {
+      res.statusCode = 404;
+      res.end("Not found");
+      return;
+    }
+
+    const actor = authenticatedAgentId(req);
+    if (!actor) {
+      res.statusCode = 401;
+      res.end("Unauthorized");
+      return;
+    }
+
+    actorContext.run(actor, () => {
+      transport.handleRequest(req, res).catch((err) => {
+        console.error("[mcp] handleRequest error:", err);
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.end("Internal server error");
+        }
+      });
+    });
+  });
+
+  await listen(httpServer, port, host);
+  console.log(`[mcp] stateless Streamable HTTP server listening on http://${host}:${port}/mcp`);
+
+  return {
+    async close(): Promise<void> {
+      await Promise.all([
+        new Promise<void>((resolve, reject) => httpServer.close(err => err ? reject(err) : resolve())),
+        transport.close(),
+      ]);
+    },
+  };
+}
+
+function listen(httpServer: Server, port: number, host: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (err: Error) => {
+      httpServer.off("listening", onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      httpServer.off("error", onError);
+      resolve();
+    };
+    httpServer.once("error", onError);
+    httpServer.once("listening", onListening);
+    httpServer.listen(port, host);
+  });
+}
+
 async function main() {
   const { dataDir, useStdio, port } = parseArgs();
-  if (dataDir) {
-    await store.initStore({ dataDir });
-  }
+  await store.initStore({ dataDir });
 
   if (useStdio) {
     if (apiKeyMap) {
@@ -407,48 +478,15 @@ async function main() {
     return;
   }
 
-  // Stateless Streamable HTTP: no session tracking, each request handled independently
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-  });
-  await server.connect(transport);
-
-  const httpServer = createServer((req, res) => {
-    if (req.url?.startsWith("/mcp")) {
-      const actor = authenticatedAgentId(req);
-      if (!actor) {
-        res.statusCode = 401;
-        res.end("Unauthorized");
-        return;
-      }
-      actorContext.run(actor, () => {
-        transport.handleRequest(req, res).catch((err) => {
-          console.error("[mcp] handleRequest error:", err);
-          if (!res.headersSent) {
-            res.statusCode = 500;
-            res.end("Internal server error");
-          }
-        });
-      });
-    } else {
-      res.statusCode = 404;
-      res.end("Not found");
-    }
-  });
-
-  const shutdown = async () => {
-    httpServer.close(() => {});
-    await transport.close();
-  };
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
-
-  httpServer.listen(port, () => {
-    console.log(`[mcp] stateless Streamable HTTP server listening on http://localhost:${port}/mcp`);
-  });
+  const mcpServer = await startMcpHttpServer({ port });
+  const shutdown = async () => { await mcpServer.close(); };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 }
 
-main().catch((err) => {
-  console.error("MCP server error:", err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("MCP server error:", err);
+    process.exit(1);
+  });
+}
