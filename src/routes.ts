@@ -6,12 +6,13 @@ import { z } from "zod";
 import * as store from "./store";
 import { generateId, now } from "./utils";
 import { Task, TaskColumn, TaskPriority, NextTask, AgentStats, BoardStats } from "./types";
-import { moveTask } from "./services";
+import { moveTask, claimTask, renewTaskLease, releaseTask } from "./services";
 import { appendAuditLog, readAuditLog } from "./audit";
 import {
   CreateTaskSchema,
   UpdateTaskSchema,
   MoveTaskSchema,
+  ClaimTaskSchema,
   CreateProjectSchema,
   CreateCommentSchema,
   RegisterAgentSchema,
@@ -727,11 +728,11 @@ router.get("/client/:projectId", async (req: Request, res: Response) => {
 // --- Move Task (convenience) ---
 
 router.post("/tasks/:id/move", validate(MoveTaskSchema), async (req: Request, res: Response) => {
-  const { column } = req.body;
+  const { column, agentId } = req.body;
   const taskBefore = await store.getTask(req.params.id as string);
   const fromColumn = taskBefore?.column;
 
-  const result = await moveTask(req.params.id as string, column);
+  const result = await moveTask(req.params.id as string, column, agentId || getAgentId(req));
 
   if ("error" in result && !("task" in result)) {
     const status = result.error === "Task not found" ? 404 : 400;
@@ -781,6 +782,53 @@ router.post("/tasks/:id/move", validate(MoveTaskSchema), async (req: Request, re
   }
 
   res.json(moveResult);
+});
+
+// --- Task lease / claim ---
+
+router.post("/tasks/:id/claim", validate(ClaimTaskSchema), async (req: Request, res: Response) => {
+  const { agentId, durationMs } = req.body;
+  const result = await claimTask(req.params.id as string, agentId, durationMs);
+  if ("error" in result) return res.status(400).json(result);
+  appendAuditLog({
+    timestamp: now(),
+    agentId,
+    action: "task.claim",
+    taskId: result.task.id,
+    projectId: result.task.projectId,
+    to: result.task.column,
+    details: `Task claimed by ${agentId} until ${result.task.leaseUntil}`,
+  });
+  res.json(result);
+});
+
+router.post("/tasks/:id/renew", validate(ClaimTaskSchema), async (req: Request, res: Response) => {
+  const { agentId, durationMs } = req.body;
+  const result = await renewTaskLease(req.params.id as string, agentId, durationMs);
+  if ("error" in result) {
+    const status = result.error === "Task not found" ? 404 : 400;
+    return res.status(status).json(result);
+  }
+  res.json(result);
+});
+
+router.post("/tasks/:id/release", validate(ClaimTaskSchema), async (req: Request, res: Response) => {
+  const { agentId } = req.body;
+  const result = await releaseTask(req.params.id as string, agentId);
+  if ("error" in result) {
+    const status = result.error === "Task not found" ? 404 : 400;
+    return res.status(status).json(result);
+  }
+  appendAuditLog({
+    timestamp: now(),
+    agentId,
+    action: "task.release",
+    taskId: result.task.id,
+    projectId: result.task.projectId,
+    to: result.task.column,
+    details: `Task released by ${agentId}`,
+  });
+  res.json(result);
 });
 
 // --- Audit ---

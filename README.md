@@ -95,6 +95,7 @@ node dist/index.js --port 8080 --data ./my-data
 | `OPENCLAW_HOOK_TOKEN` | Bearer token for OpenClaw webhook calls. Notifications disabled if not set. |
 | `OPENCLAW_AGENT_SESSION_MAP` | Optional JSON map from board assignee IDs to OpenClaw session keys, e.g. `{"main":"agent:main:main"}`. If unset, assignee IDs pass through unchanged. |
 | `AGENTBOARD_WEBHOOK_SECRET` | Secret for HMAC-SHA256 webhook signing. When set, all outbound webhooks include `X-AgentBoard-Signature` headers. |
+| `AGENTBOARD_LEASE_DURATION_MS` | Claim/lease duration for `todo` tasks in milliseconds (default: `900000` = 15 minutes) |
 | `TEMPLATES_DIR` | Custom templates directory (default: `./templates`) |
 
 ## Persistence

@@ -53,6 +53,10 @@ export interface Task {
   maxRetries?: number;      // Max retries allowed (default 2)
   requiresReview?: boolean; // Must pass through "review" before "done"
   durationMs?: number;      // Computed: completedAt - startedAt
+  // Lease / claim metadata
+  claimedBy?: string;       // Agent ID that currently holds the task lease
+  leaseUntil?: string;      // ISO timestamp until the claim is valid
+  heartbeatAt?: string;     // Last lease renewal
   createdAt: string;
   updatedAt: string;
 }

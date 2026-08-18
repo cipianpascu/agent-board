@@ -39,6 +39,9 @@ export interface TaskRow {
   max_retries: number;
   requires_review: number;
   duration_ms: number | null;
+  claimed_by: string | null;
+  lease_until: string | null;
+  heartbeat_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -110,6 +113,9 @@ function rowToTask(row: TaskRow): Task {
     maxRetries: row.max_retries,
     requiresReview: !!row.requires_review,
     durationMs: row.duration_ms ?? undefined,
+    claimedBy: row.claimed_by ?? undefined,
+    leaseUntil: row.lease_until ?? undefined,
+    heartbeatAt: row.heartbeat_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -166,6 +172,9 @@ export function migrateSqlite(db: Database.Database): void {
       max_retries     INTEGER NOT NULL DEFAULT 2,
       requires_review INTEGER NOT NULL DEFAULT 0,
       duration_ms     INTEGER,
+      claimed_by      TEXT,
+      lease_until     TEXT,
+      heartbeat_at    TEXT,
       created_at      TEXT NOT NULL,
       updated_at      TEXT NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -289,12 +298,12 @@ export class SqliteStore implements Store {
         id, project_id, title, description, status, column_id, assignee, created_by, priority,
         tags, dependencies, subtasks, comments, next_task, parent_task_id, deadline,
         input_path, output_path, started_at, completed_at, failed_at, retry_count, max_retries,
-        requires_review, duration_ms, created_at, updated_at
+        requires_review, duration_ms, claimed_by, lease_until, heartbeat_at, created_at, updated_at
       ) VALUES (
         @id, @project_id, @title, @description, @status, @column_id, @assignee, @created_by, @priority,
         @tags, @dependencies, @subtasks, @comments, @next_task, @parent_task_id, @deadline,
         @input_path, @output_path, @started_at, @completed_at, @failed_at, @retry_count, @max_retries,
-        @requires_review, @duration_ms, @created_at, @updated_at
+        @requires_review, @duration_ms, @claimed_by, @lease_until, @heartbeat_at, @created_at, @updated_at
       )
     `).run({
       id: task.id,
@@ -322,10 +331,39 @@ export class SqliteStore implements Store {
       max_retries: task.maxRetries ?? 2,
       requires_review: task.requiresReview ? 1 : 0,
       duration_ms: task.durationMs ?? null,
+      claimed_by: task.claimedBy ?? null,
+      lease_until: task.leaseUntil ?? null,
+      heartbeat_at: task.heartbeatAt ?? null,
       created_at: task.createdAt,
       updated_at: task.updatedAt,
     });
     return task;
+  }
+
+  async claimTask(taskId: string, agentId: string, leaseUntil: string, heartbeatAt: string): Promise<Task | undefined> {
+    const now = new Date().toISOString();
+    const row = this.db.prepare(`
+      UPDATE tasks
+      SET
+        column_id = 'doing',
+        status = 'doing',
+        claimed_by = @claimed_by,
+        lease_until = @lease_until,
+        heartbeat_at = @heartbeat_at,
+        started_at = COALESCE(started_at, @now),
+        updated_at = @now
+      WHERE id = @id
+        AND column_id = 'todo'
+        AND (claimed_by IS NULL OR lease_until IS NULL OR lease_until < @now)
+      RETURNING *
+    `).get({
+      id: taskId,
+      claimed_by: agentId,
+      lease_until: leaseUntil,
+      heartbeat_at: heartbeatAt,
+      now,
+    }) as TaskRow | undefined;
+    return row ? rowToTask(row) : undefined;
   }
 
   async updateTask(id: string, updates: Partial<Task>): Promise<Task | undefined> {
@@ -366,6 +404,9 @@ export class SqliteStore implements Store {
           max_retries = @max_retries,
           requires_review = @requires_review,
           duration_ms = @duration_ms,
+          claimed_by = @claimed_by,
+          lease_until = @lease_until,
+          heartbeat_at = @heartbeat_at,
           updated_at = @updated_at
         WHERE id = @id
       `).run({
@@ -394,6 +435,9 @@ export class SqliteStore implements Store {
         max_retries: merged.maxRetries ?? 2,
         requires_review: merged.requiresReview ? 1 : 0,
         duration_ms: merged.durationMs ?? null,
+        claimed_by: merged.claimedBy ?? null,
+        lease_until: merged.leaseUntil ?? null,
+        heartbeat_at: merged.heartbeatAt ?? null,
         updated_at: merged.updatedAt,
       });
       return merged;

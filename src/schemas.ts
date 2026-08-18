@@ -50,6 +50,12 @@ export const UpdateTaskSchema = z.object({
 
 export const MoveTaskSchema = z.object({
   column: TaskColumnSchema,
+  agentId: z.string().optional(),
+});
+
+export const ClaimTaskSchema = z.object({
+  agentId: z.string().min(1),
+  durationMs: z.number().int().min(0).optional(),
 });
 
 export const CreateProjectSchema = z.object({
