@@ -13,6 +13,8 @@ export interface TaskFilters {
 }
 
 export interface Store {
+  ready?(): Promise<void>;
+
   // Projects
   getProjects(filters?: ProjectFilters): Promise<Project[]>;
   getProject(id: string): Promise<Project | undefined>;

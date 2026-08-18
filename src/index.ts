@@ -6,7 +6,9 @@ import apiRouter from "./routes";
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  let port = 3456;
+  let port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3456;
+  if (Number.isNaN(port)) port = 3456;
+  const host = process.env.HOST || "0.0.0.0";
   let dataDir = path.resolve("data");
 
   for (let i = 0; i < args.length; i++) {
@@ -14,10 +16,10 @@ function parseArgs() {
     if (args[i] === "--data" && args[i + 1]) dataDir = path.resolve(args[i + 1]);
   }
 
-  return { port, dataDir };
+  return { port, host, dataDir };
 }
 
-const { port, dataDir } = parseArgs();
+const { port, host, dataDir } = parseArgs();
 
 const app = express();
 
@@ -48,8 +50,8 @@ app.get("/", (_req, res) => {
     res.status(500).json({ error: "Internal server error" });
   });
 
-  app.listen(port, () => {
-    console.log(`Agent Board running at http://localhost:${port}`);
+  app.listen(port, host, () => {
+    console.log(`Agent Board running at http://${host}:${port}`);
     console.log(`Dashboard: http://localhost:${port}`);
     console.log(`API: http://localhost:${port}/api`);
     console.log(`Data dir: ${dataDir}`);

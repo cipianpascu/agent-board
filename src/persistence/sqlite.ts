@@ -19,7 +19,7 @@ export interface TaskRow {
   title: string;
   description: string;
   status: string;
-  column: string;
+  column_id: string;
   assignee: string;
   created_by: string;
   priority: string;
@@ -90,7 +90,7 @@ function rowToTask(row: TaskRow): Task {
     title: row.title,
     description: row.description,
     status: row.status as Task["status"],
-    column: row.column as Task["column"],
+    column: row.column_id as Task["column"],
     assignee: row.assignee,
     createdBy: row.created_by,
     priority: row.priority as Task["priority"],
@@ -146,7 +146,7 @@ export function migrateSqlite(db: Database.Database): void {
       title           TEXT NOT NULL,
       description     TEXT NOT NULL DEFAULT '',
       status          TEXT NOT NULL,
-      column          TEXT NOT NULL,
+      column_id       TEXT NOT NULL,
       assignee        TEXT NOT NULL DEFAULT '',
       created_by      TEXT NOT NULL,
       priority        TEXT NOT NULL,
@@ -184,7 +184,7 @@ export function migrateSqlite(db: Database.Database): void {
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_column ON tasks(column)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_column_id ON tasks(column_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
 }
 
@@ -193,6 +193,10 @@ export class SqliteStore implements Store {
 
   constructor(db: Database.Database) {
     this.db = db;
+  }
+
+  async ready(): Promise<void> {
+    this.db.prepare("SELECT 1").get();
   }
 
   // Projects
@@ -282,12 +286,12 @@ export class SqliteStore implements Store {
     if (task.retryCount == null) task.retryCount = 0;
     this.db.prepare(`
       INSERT INTO tasks (
-        id, project_id, title, description, status, column, assignee, created_by, priority,
+        id, project_id, title, description, status, column_id, assignee, created_by, priority,
         tags, dependencies, subtasks, comments, next_task, parent_task_id, deadline,
         input_path, output_path, started_at, completed_at, failed_at, retry_count, max_retries,
         requires_review, duration_ms, created_at, updated_at
       ) VALUES (
-        @id, @project_id, @title, @description, @status, @column, @assignee, @created_by, @priority,
+        @id, @project_id, @title, @description, @status, @column_id, @assignee, @created_by, @priority,
         @tags, @dependencies, @subtasks, @comments, @next_task, @parent_task_id, @deadline,
         @input_path, @output_path, @started_at, @completed_at, @failed_at, @retry_count, @max_retries,
         @requires_review, @duration_ms, @created_at, @updated_at
@@ -298,7 +302,7 @@ export class SqliteStore implements Store {
       title: task.title,
       description: task.description,
       status: task.status,
-      column: task.column,
+      column_id: task.column,
       assignee: task.assignee,
       created_by: task.createdBy,
       priority: task.priority,
@@ -342,7 +346,7 @@ export class SqliteStore implements Store {
           title = @title,
           description = @description,
           status = @status,
-          column = @column,
+          column_id = @column_id,
           assignee = @assignee,
           created_by = @created_by,
           priority = @priority,
@@ -370,7 +374,7 @@ export class SqliteStore implements Store {
         title: merged.title,
         description: merged.description,
         status: merged.status,
-        column: merged.column,
+        column_id: merged.column,
         assignee: merged.assignee,
         created_by: merged.createdBy,
         priority: merged.priority,

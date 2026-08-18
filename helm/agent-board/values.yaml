@@ -1,0 +1,141 @@
+# Default values for agent-board.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/cipianpascu/agent-board
+  pullPolicy: IfNotPresent
+  # tag and digest are immutable in production. tag defaults to .Chart.AppVersion
+  # digest takes precedence over tag when set.
+  tag: ""
+  digest: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use. If not set, a name is generated
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+service:
+  type: ClusterIP
+  port: 3456
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: agent-board.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources: {}
+  # limits:
+  #   cpu: 1000m
+  #   memory: 512Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Additional environment variables for the main container.
+# Use secrets.existingSecret for sensitive values such as DATABASE_URL and AGENTBOARD_API_KEYS.
+env: []
+  # - name: AGENTBOARD_STORE
+  #   value: postgres
+
+# Persistence is only required for the file/SQLite backends. When using Postgres,
+# the emptyDir for /app/data can remain empty.
+persistence:
+  enabled: true
+  # Storage class for the data PVC. Set to "-" for the cluster default.
+  storageClass: ""
+  # size for /app/data when using file backend. Use emptyDir when size is empty.
+  size: ""
+
+# NetworkPolicy restricts ingress/egress to the application pod.
+networkPolicy:
+  enabled: false
+  ingress: []
+    # - from:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           name: ingress-nginx
+    #   ports:
+    #     - protocol: TCP
+    #       port: 3456
+  egress: []
+    # - to:
+    #     - namespaceSelector: {}
+    #   ports:
+    #     - protocol: TCP
+    #       port: 5432
+
+# Sensitive values. When existingSecret is set, the chart will reference keys from
+# that secret instead of creating a new one.
+secrets:
+  existingSecret: ""
+  # Database connection string. Required for PostgreSQL.
+  databaseUrl: ""
+  # Optional API keys in the format "key:agentId".
+  apiKeys: ""
+
+# Probes. Paths are exposed on /api because the API router is mounted at /api.
+probes:
+  liveness:
+    path: /api/healthz
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    path: /api/readyz
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 3
+  startup:
+    path: /api/readyz
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 12
+
+# Migrations run as a Helm pre-install/pre-upgrade Job before the Deployment.
+migrations:
+  enabled: true
+  # Annotate the Job so Helm treats it as a hook.
+  helmHook: "pre-install,pre-upgrade"
+  helmHookWeight: "-5"
+  resources: {}
+  # extra environment for the migration Job
+  env: []

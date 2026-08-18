@@ -34,6 +34,10 @@ export class FileStore implements Store {
     this.dataDir = path.resolve(dataDir);
   }
 
+  async ready(): Promise<void> {
+    return;
+  }
+
   setDataDir(dir: string) {
     this.dataDir = path.resolve(dir);
   }

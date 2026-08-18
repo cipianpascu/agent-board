@@ -72,6 +72,19 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
+router.get("/healthz", (_req: Request, res: Response) => {
+  res.json({ status: "ok" });
+});
+
+router.get("/readyz", async (_req: Request, res: Response) => {
+  try {
+    await store.getStore().ready?.();
+    res.json({ status: "ok" });
+  } catch (err) {
+    res.status(503).json({ status: "not ready", error: (err as Error).message });
+  }
+});
+
 // Apply auth middleware to all routes
 router.use(authMiddleware);
 

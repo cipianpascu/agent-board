@@ -11,6 +11,7 @@
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "mcp": "node dist/mcp-server.js",
+    "migrate": "node dist/migrate.js",
     "test": "vitest run"
   },
   "keywords": [

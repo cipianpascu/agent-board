@@ -1,0 +1,59 @@
+{{- if .Values.migrations.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agent-board.fullname" . }}-migrations
+  labels:
+    {{- include "agent-board.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrations
+  annotations:
+    "helm.sh/hook": {{ .Values.migrations.helmHook | quote }}
+    "helm.sh/hook-weight": {{ .Values.migrations.helmHookWeight | quote }}
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "agent-board.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrations
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "agent-board.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrations
+          image: {{ include "agent-board.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "dist/migrate.js"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "agent-board.fullname" . }}
+            - secretRef:
+                name: {{ include "agent-board.secretName" . }}
+                optional: true
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agent-board.secretName" . }}
+                  key: DATABASE_URL
+                  optional: false
+          {{- with .Values.migrations.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /app/data
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          emptyDir: {}
+  ttlSecondsAfterFinished: 86400
+{{- end }}

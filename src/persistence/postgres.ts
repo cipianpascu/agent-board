@@ -19,7 +19,7 @@ export interface TaskRow {
   title: string;
   description: string;
   status: string;
-  column: string;
+  column_id: string;
   assignee: string;
   created_by: string;
   priority: string;
@@ -90,7 +90,7 @@ function rowToTask(row: TaskRow): Task {
     title: row.title,
     description: row.description,
     status: row.status as Task["status"],
-    column: row.column as Task["column"],
+    column: row.column_id as Task["column"],
     assignee: row.assignee,
     createdBy: row.created_by,
     priority: row.priority as Task["priority"],
@@ -146,7 +146,7 @@ export async function migratePostgres(pool: Pool): Promise<void> {
       title           TEXT NOT NULL,
       description     TEXT NOT NULL DEFAULT '',
       status          TEXT NOT NULL,
-      column          TEXT NOT NULL,
+      column_id       TEXT NOT NULL,
       assignee        TEXT NOT NULL DEFAULT '',
       created_by      TEXT NOT NULL,
       priority        TEXT NOT NULL,
@@ -183,7 +183,7 @@ export async function migratePostgres(pool: Pool): Promise<void> {
 
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee)`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_column ON tasks(column)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_column_id ON tasks(column_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
 
   await pool.query(`
@@ -208,6 +208,10 @@ export class PostgresStore implements Store {
 
   constructor(pool: Pool) {
     this.pool = pool;
+  }
+
+  async ready(): Promise<void> {
+    await this.pool.query("SELECT 1");
   }
 
   // Projects
@@ -302,7 +306,7 @@ export class PostgresStore implements Store {
     if (task.retryCount == null) task.retryCount = 0;
     await this.pool.query(
       `INSERT INTO tasks (
-        id, project_id, title, description, status, column, assignee, created_by, priority,
+        id, project_id, title, description, status, column_id, assignee, created_by, priority,
         tags, dependencies, subtasks, comments, next_task, parent_task_id, deadline,
         input_path, output_path, started_at, completed_at, failed_at, retry_count, max_retries,
         requires_review, duration_ms, created_at, updated_at
@@ -363,7 +367,7 @@ export class PostgresStore implements Store {
           title = $2,
           description = $3,
           status = $4,
-          column = $5,
+          column_id = $5,
           assignee = $6,
           created_by = $7,
           priority = $8,

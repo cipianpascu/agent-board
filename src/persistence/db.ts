@@ -3,9 +3,10 @@ import path from "path";
 import Database from "better-sqlite3";
 import { FileStore } from "./file";
 import { SqliteStore, migrateSqlite } from "./sqlite";
-import { PostgresStore, migratePostgres } from "./postgres";
+import { PostgresStore } from "./postgres";
 import { Store } from "./types";
 import { FileAuditStore, PostgresAuditStore, setAuditStore } from "./audit";
+import { runMigrations } from "../migrations/runner";
 
 let activeStore: Store | undefined;
 
@@ -47,25 +48,26 @@ export function initSqliteDatabase(dbPath: string): Database.Database {
   return db;
 }
 
-export async function initPostgresDatabase(connectionString: string): Promise<void> {
-  const { Pool } = await import("pg");
-  const pool = new Pool({ connectionString });
-  await migratePostgres(pool);
-  await pool.end();
-}
-
 export async function initStore(options: InitOptions = {}): Promise<Store> {
-  const backend = process.env.AGENTBOARD_STORE || "file";
+  const allowedBackends = ["file", "sqlite", "postgres"];
+  const envBackend = process.env.AGENTBOARD_STORE;
   const dataDir = options.dataDir ?? process.env.AGENTBOARD_DATA_DIR ?? "data";
 
-  if (backend === "postgres" || isPostgresUrl(process.env.DATABASE_URL)) {
+  // Explicitly reject invalid AGENTBOARD_STORE values
+  if (envBackend && !allowedBackends.includes(envBackend)) {
+    throw new Error(`Invalid AGENTBOARD_STORE "${envBackend}". Allowed values: ${allowedBackends.join(", ")}`);
+  }
+
+  const backend = envBackend ?? (isPostgresUrl(process.env.DATABASE_URL) ? "postgres" : "file");
+
+  if (backend === "postgres") {
     const url = process.env.DATABASE_URL;
     if (!url) {
       throw new Error("DATABASE_URL is required for PostgreSQL backend");
     }
     const { Pool } = await import("pg");
     const pool = new Pool({ connectionString: url });
-    await migratePostgres(pool);
+    await runMigrations(pool);
     const store = new PostgresStore(pool);
     setStore(store);
     setAuditStore(new PostgresAuditStore(pool));
