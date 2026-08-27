@@ -54,14 +54,20 @@ server.tool(
 server.tool(
   "board_create_project",
   "Create a new project",
-  { name: z.string(), owner: z.string().optional(), description: z.string().optional() },
-  async ({ name, owner, description }) => {
+  {
+    name: z.string(),
+    owner: z.string().optional(),
+    description: z.string().optional(),
+    clientViewEnabled: z.boolean().optional(),
+  },
+  async ({ name, owner, description, clientViewEnabled }) => {
     const project = await store.createProject({
       id: generateId("proj"),
       name,
       status: "active",
       owner: owner || "unknown",
       description: description || "",
+      clientViewEnabled: clientViewEnabled ?? true,
       createdAt: now(),
       updatedAt: now(),
     });
@@ -79,7 +85,14 @@ server.tool(
 server.tool(
   "board_update_project",
   "Update project fields",
-  { id: z.string(), name: z.string().optional(), status: z.enum(["active", "archived"]).optional(), owner: z.string().optional(), description: z.string().optional() },
+  {
+    id: z.string(),
+    name: z.string().optional(),
+    status: z.enum(["active", "archived"]).optional(),
+    owner: z.string().optional(),
+    description: z.string().optional(),
+    clientViewEnabled: z.boolean().optional(),
+  },
   async ({ id, ...updates }) => {
     const project = await store.updateProject(id, updates);
     if (!project) return { content: [{ type: "text" as const, text: "Project not found" }], isError: true };
